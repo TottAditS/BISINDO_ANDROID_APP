@@ -1,0 +1,25 @@
+# Gradle build output/cache -- besar (ratusan MB) & machine-specific, selalu regenerable lewat
+# `.\gradlew.bat assembleDebug`. Jangan pernah commit ini.
+.gradle/
+build/
+app/build/
+.kotlin/
+
+# Local machine config -- berisi path SDK lokal (ANDROID_HOME), beda per mesin.
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Android native build cache
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db

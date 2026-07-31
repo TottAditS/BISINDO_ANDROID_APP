@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp"
+    android:background="@color/menu_background">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_name"
+        android:textColor="@color/ic_launcher_background"
+        android:textSize="28sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="48dp"
+        android:text="@string/app_tagline"
+        android:textAlignment="center"
+        android:textColor="#616161"
+        android:textSize="14sp" />
+
+    <Button
+        android:id="@+id/btnOpenCamera"
+        android:layout_width="220dp"
+        android:layout_height="56dp"
+        android:layout_marginBottom="16dp"
+        android:backgroundTint="@color/ic_launcher_background"
+        android:text="@string/btn_open_camera"
+        android:textColor="#FFFFFF" />
+
+    <Button
+        android:id="@+id/btnQuitApp"
+        android:layout_width="220dp"
+        android:layout_height="56dp"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:text="@string/btn_quit_app" />
+
+</LinearLayout>

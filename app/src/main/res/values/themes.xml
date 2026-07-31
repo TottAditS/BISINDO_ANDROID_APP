@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.BisindoRecognizer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/ic_launcher_background</item>
+        <item name="colorPrimaryDark">@color/ic_launcher_background</item>
+        <item name="colorAccent">@color/ic_launcher_foreground</item>
+    </style>
+</resources>

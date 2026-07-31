@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BISINDO Recognizer</string>
+    <string name="app_tagline">Pengenalan isyarat BISINDO real-time -- sepenuhnya offline, on-device</string>
+    <string name="btn_open_camera">Buka Kamera</string>
+    <string name="btn_quit_app">Keluar</string>
+    <string name="btn_close_camera">Tutup Kamera</string>
+    <string name="camera_permission_rationale">Izin kamera diperlukan untuk mengenali isyarat BISINDO secara real-time.</string>
+    <string name="prediction_placeholder">Menunggu deteksi tangan...</string>
+</resources>
