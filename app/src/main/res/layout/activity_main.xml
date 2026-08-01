@@ -35,6 +35,14 @@
         android:textColor="#FFFFFF" />
 
     <Button
+        android:id="@+id/btnHistory"
+        android:layout_width="220dp"
+        android:layout_height="56dp"
+        android:layout_marginBottom="16dp"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:text="@string/btn_history" />
+
+    <Button
         android:id="@+id/btnQuitApp"
         android:layout_width="220dp"
         android:layout_height="56dp"

@@ -2,7 +2,10 @@ package com.example.bisindorecognizer.keypoints
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.util.Log
+import com.example.bisindorecognizer.overlay.HandOverlayData
+import com.example.bisindorecognizer.overlay.OverlayHand
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
@@ -17,13 +20,26 @@ import kotlin.math.sqrt
  * left hand -> [0:63], right hand -> [63:126] (by MediaPipe handedness label), each hand
  * normalized by subtracting the wrist (landmark 0) then dividing by the wrist-to-middle-MCP
  * (landmark 9) distance. A hand that isn't detected stays all-zero.
+ *
+ * Reports one detection at a time via [onDetectionResult]: the raw bitmap that was analyzed (for
+ * history-frame compositing), the 126-float model-input vector, and the raw (un-normalized)
+ * 21-point landmarks per hand for HandOverlayView's bounding box/skeleton drawing. All three
+ * bundled in one callback (rather than separate ones) so callers don't have to rely on call
+ * order to correlate them.
  */
 class HandLandmarkExtractor(
     context: Context,
-    private val onVector: (FloatArray) -> Unit
+    private val onDetectionResult: (bitmap: Bitmap, vector: FloatArray, overlay: HandOverlayData) -> Unit
 ) {
     private val handLandmarker: HandLandmarker
     private val busy = AtomicBoolean(false)
+
+    // Set right before each detectAsync() call and read back in onResult() -- safe because
+    // submit()'s busy flag guarantees only one detection is in flight at a time.
+    @Volatile
+    private var lastRotationDegrees: Int = 0
+    @Volatile
+    private lateinit var lastBitmap: Bitmap
 
     init {
         val baseOptions = BaseOptions.builder().setModelAssetPath("hand_landmarker.task").build()
@@ -46,16 +62,34 @@ class HandLandmarkExtractor(
      * the ImageProxy sensor timestamp (different clock base/unit, can violate monotonicity and
      * throw).
      */
-    fun submit(bitmap: Bitmap, timestampMs: Long) {
+    fun submit(bitmap: Bitmap, rotationDegrees: Int, timestampMs: Long) {
         // Drop frame if the previous detectAsync call hasn't finished yet -- STRATEGY_KEEP_ONLY_LATEST
         // on ImageAnalysis only controls what reaches the analyzer, not HandLandmarker's own pace.
         if (!busy.compareAndSet(false, true)) return
+        lastRotationDegrees = rotationDegrees
+        lastBitmap = bitmap
         handLandmarker.detectAsync(BitmapImageBuilder(bitmap).build(), timestampMs)
     }
 
     private fun onResult(result: HandLandmarkerResult, input: MPImage) {
         busy.set(false)
-        onVector(buildVector126(result))
+        val vector = buildVector126(result)
+        val overlay = buildOverlayData(result, input.width, input.height, lastRotationDegrees)
+        onDetectionResult(lastBitmap, vector, overlay)
+    }
+
+    private fun buildOverlayData(
+        result: HandLandmarkerResult,
+        imageWidth: Int,
+        imageHeight: Int,
+        rotationDegrees: Int
+    ): HandOverlayData {
+        val hands = result.landmarks().indices.map { i ->
+            val label = result.handedness()[i][0].categoryName() // "Left" atau "Right"
+            val points = result.landmarks()[i].map { PointF(it.x(), it.y()) }
+            OverlayHand(label, points)
+        }
+        return HandOverlayData(hands, imageWidth, imageHeight, rotationDegrees)
     }
 
     private fun buildVector126(result: HandLandmarkerResult): FloatArray {

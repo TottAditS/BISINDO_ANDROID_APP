@@ -7,4 +7,13 @@
     <string name="btn_close_camera">Tutup Kamera</string>
     <string name="camera_permission_rationale">Izin kamera diperlukan untuk mengenali isyarat BISINDO secara real-time.</string>
     <string name="prediction_placeholder">Menunggu deteksi tangan...</string>
+    <string name="btn_record">Rekam (2 dtk)</string>
+    <string name="btn_recording">Merekam...</string>
+    <string name="recording_in_progress">Merekam... lakukan gerakan sekarang</string>
+    <string name="recording_timeout">Waktu habis -- gerakan belum lengkap tertangkap, coba lagi</string>
+    <string name="btn_history">Riwayat</string>
+    <string name="history_title">Riwayat Prediksi</string>
+    <string name="btn_close_history">Tutup</string>
+    <string name="history_empty">Belum ada riwayat prediksi. Rekam gerakan dulu di layar Kamera.</string>
+    <string name="history_session_missing">Sesi ini tidak ditemukan (mungkin sudah terhapus otomatis).</string>
 </resources>
