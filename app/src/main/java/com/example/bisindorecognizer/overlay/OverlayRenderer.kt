@@ -40,19 +40,26 @@ object OverlayRenderer {
     }
 
     /**
-     * Bakes box+skeleton onto a rotated+mirrored COPY of [source] (does not mutate [source]),
-     * matching the same rotate-then-mirror convention HandOverlayView uses for the live preview
-     * (front camera mirrored by CameraX/PreviewView) -- see that class's doc for the rationale.
-     * Unverified on physical hardware, same caveat as the live overlay.
+     * Rotates+mirrors [source] to match what PreviewView actually shows on screen (front camera
+     * mirrored by CameraX/PreviewView) -- see HandOverlayView's class doc for the rationale.
+     * Unverified on physical hardware, same caveat as the live overlay. No drawing -- used
+     * wherever a CLEAN (no box/skeleton) correctly-oriented frame is needed, e.g. MViTv2's input
+     * clip, as opposed to renderComposite() below which draws on top of this.
      */
-    fun renderComposite(source: Bitmap, data: HandOverlayData): Bitmap {
-        val rotationDegrees = ((data.rotationDegrees % 360) + 360) % 360
+    fun orientForDisplay(source: Bitmap, rotationDegrees: Int): Bitmap {
+        val normalizedRotation = ((rotationDegrees % 360) + 360) % 360
         val matrix = Matrix().apply {
-            postRotate(rotationDegrees.toFloat())
+            postRotate(normalizedRotation.toFloat())
             postScale(-1f, 1f)
         }
         val transformed = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-        val composed = transformed.copy(Bitmap.Config.ARGB_8888, true)
+        return transformed.copy(Bitmap.Config.ARGB_8888, true)
+    }
+
+    /** Bakes box+skeleton onto an [orientForDisplay]-ed copy of [source] (does not mutate [source]). */
+    fun renderComposite(source: Bitmap, data: HandOverlayData): Bitmap {
+        val rotationDegrees = ((data.rotationDegrees % 360) + 360) % 360
+        val composed = orientForDisplay(source, rotationDegrees)
         val canvas = Canvas(composed)
         val rotW = composed.width.toFloat()
         val rotH = composed.height.toFloat()

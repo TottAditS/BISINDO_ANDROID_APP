@@ -7,23 +7,32 @@ import android.content.Context
 import java.nio.FloatBuffer
 import kotlin.math.exp
 
-/** Loads cnnsa_bilstm.onnx from assets and runs softmax+argmax over the "logits" output. */
+/** Loads cnnsa_bilstm.onnx from assets and runs softmax+top-K over the "logits" output. */
 class OnnxPredictor(context: Context) {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession = env.createSession(
-        context.assets.open("cnnsa_bilstm.onnx").use { it.readBytes() },
-        OrtSession.SessionOptions()
-    )
+    private val session: OrtSession
 
-    fun predict(sequence: FloatArray): Pair<Int, Float> {
-        val shape = longArrayOf(1, 30, 126)
+    /** Cold-start/model-load time -- measured for on-device comparison against MvitPredictor. */
+    val loadTimeMs: Long
+
+    init {
+        val start = System.nanoTime()
+        session = env.createSession(
+            context.assets.open("cnnsa_bilstm.onnx").use { it.readBytes() },
+            OrtSession.SessionOptions()
+        )
+        loadTimeMs = (System.nanoTime() - start) / 1_000_000
+    }
+
+    /** @return top-[TOP_K] (labelIndex, confidence) pairs, sorted highest confidence first. */
+    fun predict(sequence: FloatArray): List<Pair<Int, Float>> {
+        val shape = longArrayOf(1, SEQUENCE_LENGTH.toLong(), FEATURE_SIZE.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(sequence), shape).use { inputTensor ->
             session.run(mapOf("keypoints" to inputTensor), setOf("logits")).use { results ->
                 @Suppress("UNCHECKED_CAST")
                 val logits = (results.get("logits").get().value as Array<FloatArray>)[0]
                 val probs = softmax(logits)
-                val idx = probs.indices.maxByOrNull { probs[it] }!!
-                return idx to probs[idx]
+                return probs.indices.sortedByDescending { probs[it] }.take(TOP_K).map { it to probs[it] }
             }
         }
     }
@@ -37,5 +46,11 @@ class OnnxPredictor(context: Context) {
 
     fun close() {
         session.close()
+    }
+
+    companion object {
+        const val SEQUENCE_LENGTH = 30
+        const val FEATURE_SIZE = 126
+        const val TOP_K = 3
     }
 }

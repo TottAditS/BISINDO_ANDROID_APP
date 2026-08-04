@@ -36,5 +36,10 @@
             android:name=".history.HistoryPlaybackActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>
+
+        <activity
+            android:name=".history.EvaluationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"/>
     </application>
 </manifest>

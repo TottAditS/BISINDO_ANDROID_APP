@@ -18,6 +18,9 @@ class HistoryActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.btnCloseHistory.setOnClickListener { finish() }
+        binding.btnEvaluation.setOnClickListener {
+            startActivity(Intent(this, EvaluationActivity::class.java))
+        }
 
         val sessions = HistoryStore(this).listSessions()
         binding.historyList.layoutManager = LinearLayoutManager(this)

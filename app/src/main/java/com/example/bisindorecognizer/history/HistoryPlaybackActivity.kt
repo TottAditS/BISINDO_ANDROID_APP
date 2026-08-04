@@ -13,7 +13,7 @@ import com.example.bisindorecognizer.databinding.ActivityHistoryPlaybackBinding
  * "Flipbook" playback -- bukan video asli, cuma gonta-ganti ImageView antar frame JPEG yang
  * sudah disimpan HistoryStore (overlay box/skeleton sudah dipanggang langsung ke tiap frame,
  * lihat OverlayRenderer.renderComposite). FRAME_INTERVAL_MS dipilih supaya total durasi kira-kira
- * sama dengan durasi rekam asli (10 frame representasi ~2 detik gerakan -> 200ms/frame).
+ * sama dengan durasi rekam asli (10 frame representasi 5 detik gerakan -> 500ms/frame).
  */
 class HistoryPlaybackActivity : AppCompatActivity() {
 
@@ -46,7 +46,13 @@ class HistoryPlaybackActivity : AppCompatActivity() {
             return
         }
 
-        binding.labelText.text = "${session.label} (${"%.1f".format(session.confidence * 100)}%)"
+        val cnnLine = formatBreakdown("CNNsa-BiLSTM", session.cnnPredictions)
+        val mvitLine = if (session.mvitPredictions.isEmpty()) {
+            getString(R.string.history_mvit_unavailable)
+        } else {
+            formatBreakdown("MViTv2", session.mvitPredictions)
+        }
+        binding.labelText.text = "$cnnLine\n$mvitLine"
         frames = (0 until session.frameCount).mapNotNull { index ->
             val file = session.frameFile(index)
             if (file.exists()) BitmapFactory.decodeFile(file.path) else null
@@ -59,8 +65,15 @@ class HistoryPlaybackActivity : AppCompatActivity() {
         mainHandler.removeCallbacks(advanceFrame)
     }
 
+    // "90.0% Maaf, 8.0% Yakin, 2.0% Saya" -- top-K predictions dari 1 model, paling yakin duluan
+    // (list-nya sendiri sudah terurut dari OnnxPredictor/MvitPredictor.predict()).
+    private fun formatBreakdown(modelName: String, predictions: List<RankedPrediction>): String {
+        val parts = predictions.joinToString(", ") { "${"%.1f".format(it.confidence * 100)}% ${it.label}" }
+        return "$modelName: $parts"
+    }
+
     companion object {
         const val EXTRA_SESSION_ID = "session_id"
-        private const val FRAME_INTERVAL_MS = 200L
+        private const val FRAME_INTERVAL_MS = 500L
     }
 }

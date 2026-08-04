@@ -6,23 +6,43 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.bisindorecognizer.camera.AppCameraController
 import com.example.bisindorecognizer.databinding.ActivityCameraBinding
 import com.example.bisindorecognizer.history.HistoryStore
+import com.example.bisindorecognizer.history.RankedPrediction
+import com.example.bisindorecognizer.inference.MvitPredictor
 import com.example.bisindorecognizer.inference.OnnxPredictor
+import com.example.bisindorecognizer.keypoints.ClipPreprocessor
 import com.example.bisindorecognizer.keypoints.HandLandmarkExtractor
-import com.example.bisindorecognizer.keypoints.SequenceBuffer
+import com.example.bisindorecognizer.keypoints.KeypointResampler
 import com.example.bisindorecognizer.overlay.HandOverlayData
 import com.example.bisindorecognizer.overlay.OverlayRenderer
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Layar kamera + prediksi live. Hidup hanya selama activity ini hidup -- ditutup lewat tombol
  * "Tutup Kamera" atau tombol Back sistem, keduanya berujung ke finish() -> onDestroy(), yang
  * melepas kamera + native resource MediaPipe/ONNX Runtime secara eksplisit (lihat releaseResources()).
+ *
+ * Sejak fitur perbandingan MViTv2 (lihat rencana.md di repo riset ML, PROGRESS.md untuk detail):
+ * tiap sesi "Rekam" menjalankan DUA model atas rekaman yang sama -- CNNsa-BiLSTM dan MViTv2 --
+ * lalu menampilkan gloss+confidence+latency dari keduanya berdampingan untuk perbandingan
+ * trade-off akurasi-vs-efisiensi di laporan skripsi.
+ *
+ * Rekam pakai DURASI TETAP (RECORDING_DURATION_MS), bukan lagi "berhenti begitu buffer 30 frame
+ * penuh" -- desain lama itu bikin sesi rekam SELALU gagal ("waktu habis") begitu ada kerja ekstra
+ * per-frame yang memperlambat throughput MediaPipe (persis yang terjadi waktu fitur MViTv2
+ * pertama kali ditambah -- lihat PROGRESS.md). Sekarang: tangkap SEMUA frame yang berhasil
+ * terdeteksi selama durasi tetap, baru di akhir di-resample ke jumlah frame yang model butuhkan
+ * (`KeypointResampler` untuk 30 frame CNNsa-BiLSTM, `ClipPreprocessor` untuk 16 frame MViTv2) --
+ * jadi hasil akhir tidak bergantung sama sekali pada throughput device saat itu.
  */
 class CameraActivity : AppCompatActivity() {
 
@@ -31,29 +51,65 @@ class CameraActivity : AppCompatActivity() {
     private lateinit var handLandmarkExtractor: HandLandmarkExtractor
     private lateinit var onnxPredictor: OnnxPredictor
     private lateinit var historyStore: HistoryStore
-    private val sequenceBuffer = SequenceBuffer()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Prediksi HANYA jalan di dalam jendela "Rekam" 2 detik yang dipicu tombol -- bukan sliding
-    // window terus-menerus. Model dilatih pakai klip 30-frame yang isinya satu gestur utuh, jadi
-    // window acak di tengah gerakan (sliding window lama) menghasilkan prediksi yang tidak berarti.
-    // isRecording dibaca/ditulis dari 2 thread (klik tombol di main thread, hasil keypoint di
-    // thread internal MediaPipe) makanya AtomicBoolean, dan penyelesaian rekaman (baik karena
-    // buffer penuh maupun timeout) di-guard lewat compareAndSet supaya cuma salah satu jalan sekali.
-    private val isRecording = AtomicBoolean(false)
-    private var recordingTimeoutRunnable: Runnable? = null
+    // MViTv2 jauh lebih berat (143MB, load pertama kali + copy dari assets ke filesDir bisa
+    // beberapa detik, inferensi ratusan ms) -- dimuat SEKALI di background saat activity ini
+    // dibuka, TIDAK di main thread. null berarti "belum siap" ATAU "gagal dimuat"; kedua kasus
+    // itu ditangani sama (skip MViTv2 utuh untuk sesi itu, CNNsa-BiLSTM tetap jalan seperti biasa)
+    // supaya kegagalan MViTv2 tidak melumpuhkan fitur inti.
+    @Volatile
+    private var mvitPredictor: MvitPredictor? = null
 
-    // Untuk histori: dari 30 frame per sesi rekam, cuma simpan 1 dari tiap HISTORY_FRAME_STEP
-    // frame (10 total) biar hemat storage -- lihat HistoryStore untuk retensi 5 sesi terakhir.
-    // Kedua field ini disentuh dari thread internal MediaPipe (onDetectionResult) DAN main thread
-    // (startRecording()/onRecordingTimeout()), makanya akses ke keduanya di-synchronized.
-    private var recordingFrameIndex = 0
+    // Dipakai untuk SEMUA kerja berat setelah sesi rekam selesai (predict CNNsa-BiLSTM, simpan
+    // histori, preprocess+predict MViTv2) supaya main thread tidak pernah nge-block, DAN untuk
+    // load awal MViTv2. Single-thread -> otomatis serial, tidak perlu lock tambahan di dalamnya.
+    private val backgroundExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    // isRecording dibaca/ditulis dari 2 thread (klik tombol & countdown tick di main thread,
+    // hasil keypoint di thread internal MediaPipe) makanya AtomicBoolean.
+    private val isRecording = AtomicBoolean(false)
+    private var recordingStartElapsedMs = 0L
+
+    // SEMUA vector keypoint yang diterima selama sesi rekam (bukan rolling window 30 lagi) --
+    // di-resample ke 30 frame oleh KeypointResampler tepat sebelum predict. Disentuh dari thread
+    // MediaPipe (nulis) dan main thread (baca+clear di awal/akhir sesi), makanya synchronized.
+    private val capturedFrames = mutableListOf<FloatArray>()
+
+    // Untuk histori: dari seluruh durasi rekam, cuma simpan 1 komposit tiap HISTORY_FRAME_INTERVAL_MS
+    // (10 total) biar hemat storage -- lihat HistoryStore untuk retensi 5 sesi terakhir. Dasarnya
+    // WAKTU (elapsed sejak recordingStartElapsedMs), bukan hitungan frame, karena total frame yang
+    // bakal masuk baru diketahui di akhir (durasi-driven, bukan frame-count-driven).
+    private var nextHistoryFrameElapsedMs = 0L
     private val pendingHistoryFrames = mutableListOf<Bitmap>()
 
+    // Untuk MViTv2: SEMUA frame mentah + rotasi (belum dioriented/diresize -- itu kerja berat,
+    // SENGAJA ditunda ke finishRecordingAndPredict() di background thread setelah rekam selesai,
+    // BUKAN dilakukan di sini per-frame. Versi awal fitur ini melakukan rotate+resize per-frame
+    // LANGSUNG di thread MediaPipe -- itu akar masalah "waktu habis" yang dilaporkan user, karena
+    // memperlambat throughput MediaPipe sampai 30 frame tidak sempat kekumpul. Lihat PROGRESS.md.
+    private val mvitRawFrames = mutableListOf<Pair<Bitmap, Int>>()
+
     companion object {
-        private const val RECORDING_TIMEOUT_MS = 2000L
+        private const val TAG = "CameraActivity"
+        private const val RECORDING_DURATION_MS = 5000L
         private const val HISTORY_FRAMES_PER_SESSION = 10
-        private const val HISTORY_FRAME_STEP = SequenceBuffer.DEFAULT_WINDOW_SIZE / HISTORY_FRAMES_PER_SESSION
+        private const val HISTORY_FRAME_INTERVAL_MS = RECORDING_DURATION_MS / HISTORY_FRAMES_PER_SESSION
+        private const val CNNSA_BILSTM_SIZE_LABEL = "14.65 MB"
+        private const val MVIT_V2_SIZE_LABEL = "143 MB"
+    }
+
+    private var secondsRemaining = 0
+    private val countdownRunnable = object : Runnable {
+        override fun run() {
+            secondsRemaining--
+            if (secondsRemaining <= 0) {
+                finishRecordingAndPredict()
+            } else {
+                binding.predictionText.text = getString(R.string.recording_countdown, secondsRemaining)
+                mainHandler.postDelayed(this, 1000L)
+            }
+        }
     }
 
     private val requestCameraPermission = registerForActivityResult(
@@ -84,6 +140,8 @@ class CameraActivity : AppCompatActivity() {
         binding.btnCloseCamera.setOnClickListener { finish() }
         binding.btnRecord.setOnClickListener { startRecording() }
 
+        loadMvitPredictor()
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED
         ) {
@@ -97,84 +155,176 @@ class CameraActivity : AppCompatActivity() {
         cameraController.start()
     }
 
-    // Dipanggil dari klik tombol "Rekam" (main thread). Kosongkan buffer supaya jendela 30-frame
-    // yang dikumpulkan murni gerakan yang dilakukan SETELAH tombol ditekan, lalu pasang timeout
-    // 2 detik sebagai batas atas -- kalau buffer keburu penuh duluan (fps MediaPipe cukup tinggi),
-    // completeRecording() lewat onDetectionResult yang menang dan runnable timeout ini dibatalkan.
+    // Dijalankan sekali di background executor saat activity dibuka. btnRecord dikunci sampai ini
+    // selesai (sukses ATAU gagal) supaya tidak ada sesi rekam yang mulai sebelum jelas apakah
+    // MViTv2 akan ikut diproses atau di-skip untuk sesi itu.
+    private fun loadMvitPredictor() {
+        binding.btnRecord.isEnabled = false
+        binding.predictionText.text = getString(R.string.mvit_loading)
+        backgroundExecutor.execute {
+            try {
+                val predictor = MvitPredictor(this)
+                mvitPredictor = predictor
+                Log.i(TAG, "MViTv2 dimuat dalam ${predictor.loadTimeMs}ms")
+                mainHandler.post {
+                    binding.btnRecord.isEnabled = true
+                    binding.predictionText.text = getString(R.string.prediction_placeholder)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Gagal memuat MViTv2 -- fitur perbandingan di-skip, CNNsa-BiLSTM tetap jalan", e)
+                mainHandler.post {
+                    binding.btnRecord.isEnabled = true
+                    binding.predictionText.text = getString(R.string.mvit_load_failed)
+                }
+            }
+        }
+    }
+
+    // Dipanggil dari klik tombol "Rekam" (main thread). Rekam durasi TETAP (bukan lagi berhenti
+    // begitu 30 frame terkumpul) -- lihat doc class di atas kenapa desain lama gagal terus.
     private fun startRecording() {
         if (!isRecording.compareAndSet(false, true)) return
-        sequenceBuffer.clear()
+        synchronized(capturedFrames) { capturedFrames.clear() }
         synchronized(pendingHistoryFrames) {
-            recordingFrameIndex = 0
             pendingHistoryFrames.clear()
+            nextHistoryFrameElapsedMs = 0L
         }
+        synchronized(mvitRawFrames) { mvitRawFrames.clear() }
+        recordingStartElapsedMs = SystemClock.elapsedRealtime()
+
         binding.btnRecord.isEnabled = false
         binding.btnRecord.text = getString(R.string.btn_recording)
-        binding.predictionText.text = getString(R.string.recording_in_progress)
 
-        val runnable = Runnable { onRecordingTimeout() }
-        recordingTimeoutRunnable = runnable
-        mainHandler.postDelayed(runnable, RECORDING_TIMEOUT_MS)
+        secondsRemaining = (RECORDING_DURATION_MS / 1000L).toInt()
+        binding.predictionText.text = getString(R.string.recording_countdown, secondsRemaining)
+        mainHandler.postDelayed(countdownRunnable, 1000L)
     }
 
     // Callback hasil LIVE_STREAM MediaPipe jalan di thread internal MediaPipe (bukan main thread
-    // atau thread executor CameraX). Semua kerja di sini (push buffer, composite bitmap history,
-    // predict) cukup ringan untuk jalan langsung di situ, tapi update View WAJIB dipindah ke main
-    // thread.
+    // atau thread executor CameraX). HARUS tetap murah -- lihat catatan mvitRawFrames di atas
+    // soal kenapa kerja berat (rotate/resize bitmap) tidak boleh terjadi di sini.
     private fun onDetectionResult(bitmap: Bitmap, vector: FloatArray, overlay: HandOverlayData) {
         mainHandler.post { binding.handOverlay.update(overlay) }
 
         if (!isRecording.get()) return
-        sequenceBuffer.push(vector)
+        synchronized(capturedFrames) { capturedFrames.add(vector) }
 
-        // pendingHistoryFrames/recordingFrameIndex bisa dibaca/ditulis dari thread ini DAN dari
-        // main thread (startRecording()/onRecordingTimeout()) -- synchronized di sini (bukan
-        // AtomicBoolean/@Synchronized) karena butuh baca-lalu-tulis 2 field sekaligus.
-        val shouldSaveFrame = synchronized(pendingHistoryFrames) {
-            val frameIndex = recordingFrameIndex++
-            frameIndex % HISTORY_FRAME_STEP == 0 && pendingHistoryFrames.size < HISTORY_FRAMES_PER_SESSION
+        val elapsed = SystemClock.elapsedRealtime() - recordingStartElapsedMs
+        val shouldSaveHistoryFrame = synchronized(pendingHistoryFrames) {
+            if (elapsed >= nextHistoryFrameElapsedMs && pendingHistoryFrames.size < HISTORY_FRAMES_PER_SESSION) {
+                nextHistoryFrameElapsedMs += HISTORY_FRAME_INTERVAL_MS
+                true
+            } else {
+                false
+            }
         }
-        if (shouldSaveFrame) {
+        if (shouldSaveHistoryFrame) {
             val composedFrame = OverlayRenderer.renderComposite(bitmap, overlay)
             synchronized(pendingHistoryFrames) { pendingHistoryFrames.add(composedFrame) }
         }
 
-        if (sequenceBuffer.isFull()) completeRecording()
+        // Cuma simpan referensi -- MURAH (tidak ada bitmap baru dialokasikan di sini).
+        synchronized(mvitRawFrames) { mvitRawFrames.add(bitmap to overlay.rotationDegrees) }
     }
 
-    private fun completeRecording() {
+    // Dipicu countdown mencapai 0 (main thread). Snapshot semua buffer lalu lempar SELURUH kerja
+    // berat (predict CNNsa-BiLSTM, simpan histori, preprocess+predict MViTv2) ke background
+    // thread -- termasuk CNNsa-BiLSTM yang sebenarnya cepat, supaya main thread tidak pernah
+    // menunggu apa pun. btnRecord baru aktif lagi di ujung SEMUA jalur (sukses/gagal/kosong),
+    // supaya tidak ada sesi rekam baru mulai selagi sesi ini masih diproses.
+    private fun finishRecordingAndPredict() {
         if (!isRecording.compareAndSet(true, false)) return
-        cancelRecordingTimeout()
 
-        val (labelIndex, confidence) = onnxPredictor.predict(sequenceBuffer.toFlatFloatArray())
-        val label = LabelMap.gloss(labelIndex)
-        val text = "$label (${"%.1f".format(confidence * 100)}%)"
+        val keypointFrames = synchronized(capturedFrames) { capturedFrames.toList().also { capturedFrames.clear() } }
+        val historyFrames = synchronized(pendingHistoryFrames) { pendingHistoryFrames.toList().also { pendingHistoryFrames.clear() } }
+        val mvitFrames = synchronized(mvitRawFrames) { mvitRawFrames.toList().also { mvitRawFrames.clear() } }
 
-        val framesToSave = pendingHistoryFrames.toList()
-        pendingHistoryFrames.clear()
-        historyStore.saveSession(label, confidence, framesToSave)
+        binding.btnRecord.text = getString(R.string.btn_processing)
+        binding.predictionText.text = getString(R.string.recording_processing)
 
-        mainHandler.post {
-            binding.btnRecord.isEnabled = true
-            binding.btnRecord.text = getString(R.string.btn_record)
-            binding.predictionText.text = text
+        backgroundExecutor.execute {
+            if (keypointFrames.isEmpty()) {
+                mainHandler.post {
+                    binding.btnRecord.isEnabled = true
+                    binding.btnRecord.text = getString(R.string.btn_record)
+                    binding.predictionText.text = getString(R.string.recording_no_hand)
+                }
+                return@execute
+            }
+
+            val cnnStart = System.nanoTime()
+            val cnnTopK = onnxPredictor.predict(KeypointResampler.resampleAndFlatten(keypointFrames))
+            val cnnLatencyMs = (System.nanoTime() - cnnStart) / 1_000_000
+            val (topLabelIndex, topConfidence) = cnnTopK.first()
+            val cnnResultLine = getString(
+                R.string.comparison_row, "CNNsa-BiLSTM", LabelMap.gloss(topLabelIndex), topConfidence * 100,
+                cnnLatencyMs, CNNSA_BILSTM_SIZE_LABEL
+            )
+            val cnnPredictions = cnnTopK.map { (idx, conf) -> RankedPrediction(LabelMap.gloss(idx), conf) }
+
+            mainHandler.post {
+                binding.predictionText.text = "$cnnResultLine\n${getString(R.string.mvit_processing)}"
+            }
+
+            val (mvitResultLine, mvitPredictions, mvitLatencyMs) = runMvitComparison(mvitFrames)
+
+            // Histori disimpan SETELAH MViTv2 selesai (bukan langsung sesudah CNNsa-BiLSTM) supaya
+            // satu entri histori memuat breakdown top-3 KEDUA model sekaligus -- boleh nunggu lebih
+            // lama karena ini semua sudah di background thread, tidak ada yang nge-block UI.
+            if (historyFrames.isNotEmpty()) {
+                historyStore.saveSession(cnnPredictions, mvitPredictions, cnnLatencyMs, mvitLatencyMs, historyFrames)
+            }
+
+            mainHandler.post {
+                binding.btnRecord.isEnabled = true
+                binding.btnRecord.text = getString(R.string.btn_record)
+                binding.predictionText.text = "$cnnResultLine\n$mvitResultLine"
+            }
         }
     }
 
-    // Runnable ini sendiri jalan di main thread (postDelayed di Handler main-looper), jadi aman
-    // sentuh View langsung tanpa post lagi.
-    private fun onRecordingTimeout() {
-        if (!isRecording.compareAndSet(true, false)) return
-        recordingTimeoutRunnable = null
-        synchronized(pendingHistoryFrames) { pendingHistoryFrames.clear() } // sesi gagal -- tidak masuk histori
-        binding.btnRecord.isEnabled = true
-        binding.btnRecord.text = getString(R.string.btn_record)
-        binding.predictionText.text = getString(R.string.recording_timeout)
-    }
-
-    private fun cancelRecordingTimeout() {
-        recordingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
-        recordingTimeoutRunnable = null
+    // Dipanggil dari dalam backgroundExecutor (bukan main thread) -- orientForDisplay+resize yang
+    // sebelumnya jalan per-frame di thread MediaPipe sekarang dilakukan di sini, sekali per sesi,
+    // atas snapshot [frames]. Error/OOM MViTv2 sengaja ditangkap & dilaporkan sebagai teks (bukan
+    // di-crash-kan) -- lihat rencana.md poin risiko #3: kegagalan total ITU SENDIRI temuan yang
+    // sah untuk laporan skripsi. @return baris teks buat UI, daftar top-3, dan latency (ms) buat
+    // disimpan ke histori/Evaluasi -- daftar kosong & latency null kalau MViTv2 tidak
+    // tersedia/gagal/tidak ada frame.
+    private fun runMvitComparison(frames: List<Pair<Bitmap, Int>>): Triple<String, List<RankedPrediction>, Long?> {
+        return try {
+            val predictor = mvitPredictor
+            when {
+                predictor == null -> Triple(getString(R.string.mvit_unavailable), emptyList(), null)
+                frames.isEmpty() -> Triple(getString(R.string.mvit_no_frames), emptyList(), null)
+                else -> {
+                    val orientedFrames = frames.map { (bitmap, rotationDegrees) ->
+                        val oriented = OverlayRenderer.orientForDisplay(bitmap, rotationDegrees)
+                        if (oriented.width == MvitPredictor.FRAME_SIZE && oriented.height == MvitPredictor.FRAME_SIZE) {
+                            oriented
+                        } else {
+                            Bitmap.createScaledBitmap(oriented, MvitPredictor.FRAME_SIZE, MvitPredictor.FRAME_SIZE, true)
+                        }
+                    }
+                    val clip = ClipPreprocessor.preprocess(orientedFrames)
+                    val start = System.nanoTime()
+                    val mvitTopK = predictor.predict(clip)
+                    val latencyMs = (System.nanoTime() - start) / 1_000_000
+                    val (topLabelIndex, topConfidence) = mvitTopK.first()
+                    val resultLine = getString(
+                        R.string.comparison_row, "MViTv2", LabelMap.gloss(topLabelIndex),
+                        topConfidence * 100, latencyMs, MVIT_V2_SIZE_LABEL
+                    )
+                    val predictions = mvitTopK.map { (idx, conf) -> RankedPrediction(LabelMap.gloss(idx), conf) }
+                    Triple(resultLine, predictions, latencyMs)
+                }
+            }
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "MViTv2 OOM saat inferensi", e)
+            Triple(getString(R.string.mvit_oom), emptyList(), null)
+        } catch (e: Exception) {
+            Log.e(TAG, "MViTv2 gagal inferensi", e)
+            Triple(getString(R.string.mvit_error), emptyList(), null)
+        }
     }
 
     // onDestroy() selalu dipanggil sistem saat activity ini selesai -- baik lewat tombol "Tutup
@@ -184,11 +334,19 @@ class CameraActivity : AppCompatActivity() {
     // pemanggilan eksplisit di bawah ini memastikan native resource MediaPipe HandLandmarker dan
     // sesi ONNX Runtime juga dilepas (tidak otomatis diikat ke lifecycle activity), supaya tidak
     // ada apa pun dari layar ini yang tetap jalan di background setelah activity ditutup.
+    //
+    // CATATAN RISIKO yang belum dimitigasi (konsisten dengan level rigor project ini di tempat
+    // lain): kalau user pencet "Tutup Kamera" PAS backgroundExecutor lagi jalan (mid-predict), ada
+    // race kecil antara task itu vs onnxPredictor.close()/mvitPredictor.close() di bawah ini.
+    // backgroundExecutor.shutdown() cuma mencegah TASK BARU diterima, tidak menghentikan task yang
+    // sedang jalan (native ONNX inference tidak reliable diinterupsi paksa).
     override fun onDestroy() {
         super.onDestroy()
-        cancelRecordingTimeout()
+        mainHandler.removeCallbacks(countdownRunnable)
         cameraController.shutdown()
         handLandmarkExtractor.close()
         onnxPredictor.close()
+        mvitPredictor?.close()
+        backgroundExecutor.shutdown()
     }
 }

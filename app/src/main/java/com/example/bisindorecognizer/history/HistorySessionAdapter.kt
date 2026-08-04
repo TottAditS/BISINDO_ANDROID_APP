@@ -29,9 +29,10 @@ class HistorySessionAdapter(
         if (thumbFile.exists()) {
             holder.binding.thumbnail.setImageBitmap(BitmapFactory.decodeFile(thumbFile.path))
         }
-        holder.binding.labelText.text = session.label
-        holder.binding.detailText.text =
-            "${"%.1f".format(session.confidence * 100)}% -- ${dateFormat.format(Date(session.timestampMs))}"
+        val topCnn = session.cnnPredictions.firstOrNull()
+        holder.binding.labelText.text = topCnn?.label ?: "?"
+        val confidenceText = topCnn?.let { "%.1f".format(it.confidence * 100) } ?: "?"
+        holder.binding.detailText.text = "$confidenceText% -- ${dateFormat.format(Date(session.timestampMs))}"
         holder.itemView.setOnClickListener { onClick(session) }
     }
 

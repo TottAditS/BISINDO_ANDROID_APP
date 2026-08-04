@@ -29,7 +29,8 @@
         android:background="#AA000000"
         android:padding="16dp"
         android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:gravity="center" />
+        android:textSize="16sp"
+        android:lineSpacingExtra="6dp"
+        android:gravity="start" />
 
 </FrameLayout>
