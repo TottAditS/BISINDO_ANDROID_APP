@@ -26,7 +26,9 @@ class HistoryStore(context: Context) {
         mvitPredictions: List<RankedPrediction>,
         cnnLatencyMs: Long,
         mvitLatencyMs: Long?,
-        frames: List<Bitmap>
+        frames: List<Bitmap>,
+        rawDetectionCount: Int,
+        capturedKeypointCount: Int
     ) {
         if (frames.isEmpty() || cnnPredictions.isEmpty()) return
         val timestampMs = System.currentTimeMillis()
@@ -45,6 +47,8 @@ class HistoryStore(context: Context) {
             if (mvitLatencyMs != null) put("mvitLatencyMs", mvitLatencyMs)
             put("timestampMs", timestampMs)
             put("frameCount", frames.size)
+            put("rawDetectionCount", rawDetectionCount)
+            put("capturedKeypointCount", capturedKeypointCount)
         }
         File(sessionDir, "metadata.json").writeText(metadata.toString())
 
@@ -89,6 +93,9 @@ class HistoryStore(context: Context) {
                 mvitLatencyMs = if (json.has("mvitLatencyMs")) json.getLong("mvitLatencyMs") else null,
                 timestampMs = json.getLong("timestampMs"),
                 frameCount = json.getInt("frameCount"),
+                // has() guards: sesi lama (sebelum field ini ditambah) tetap kebaca, cuma tampil 0.
+                rawDetectionCount = if (json.has("rawDetectionCount")) json.getInt("rawDetectionCount") else 0,
+                capturedKeypointCount = if (json.has("capturedKeypointCount")) json.getInt("capturedKeypointCount") else 0,
                 dir = dir
             )
         } catch (e: Exception) {

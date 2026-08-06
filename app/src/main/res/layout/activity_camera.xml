@@ -8,6 +8,30 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center_horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:background="#88000000"
+            android:padding="6dp"
+            android:text="@string/guide_box_hint"
+            android:textColor="#FFEB3B"
+            android:textSize="14sp" />
+
+        <View
+            android:layout_width="240dp"
+            android:layout_height="240dp"
+            android:background="@drawable/guide_box" />
+
+    </LinearLayout>
+
     <com.example.bisindorecognizer.overlay.HandOverlayView
         android:id="@+id/handOverlay"
         android:layout_width="match_parent"

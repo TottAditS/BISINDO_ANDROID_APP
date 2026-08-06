@@ -46,11 +46,11 @@ class HistoryPlaybackActivity : AppCompatActivity() {
             return
         }
 
-        val cnnLine = formatBreakdown("CNNsa-BiLSTM", session.cnnPredictions)
+        val cnnLine = formatPredictionBreakdown(session.cnnPredictions, "CNNsa-BiLSTM")
         val mvitLine = if (session.mvitPredictions.isEmpty()) {
             getString(R.string.history_mvit_unavailable)
         } else {
-            formatBreakdown("MViTv2", session.mvitPredictions)
+            formatPredictionBreakdown(session.mvitPredictions, "MViTv2")
         }
         binding.labelText.text = "$cnnLine\n$mvitLine"
         frames = (0 until session.frameCount).mapNotNull { index ->
@@ -63,13 +63,6 @@ class HistoryPlaybackActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         mainHandler.removeCallbacks(advanceFrame)
-    }
-
-    // "90.0% Maaf, 8.0% Yakin, 2.0% Saya" -- top-K predictions dari 1 model, paling yakin duluan
-    // (list-nya sendiri sudah terurut dari OnnxPredictor/MvitPredictor.predict()).
-    private fun formatBreakdown(modelName: String, predictions: List<RankedPrediction>): String {
-        val parts = predictions.joinToString(", ") { "${"%.1f".format(it.confidence * 100)}% ${it.label}" }
-        return "$modelName: $parts"
     }
 
     companion object {

@@ -19,12 +19,13 @@ import com.example.bisindorecognizer.inference.MvitPredictor
 import com.example.bisindorecognizer.inference.OnnxPredictor
 import com.example.bisindorecognizer.keypoints.ClipPreprocessor
 import com.example.bisindorecognizer.keypoints.HandLandmarkExtractor
-import com.example.bisindorecognizer.keypoints.KeypointResampler
+import com.example.bisindorecognizer.keypoints.KeypointSequenceBuilder
 import com.example.bisindorecognizer.overlay.HandOverlayData
 import com.example.bisindorecognizer.overlay.OverlayRenderer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Layar kamera + prediksi live. Hidup hanya selama activity ini hidup -- ditutup lewat tombol
@@ -40,9 +41,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * penuh" -- desain lama itu bikin sesi rekam SELALU gagal ("waktu habis") begitu ada kerja ekstra
  * per-frame yang memperlambat throughput MediaPipe (persis yang terjadi waktu fitur MViTv2
  * pertama kali ditambah -- lihat PROGRESS.md). Sekarang: tangkap SEMUA frame yang berhasil
- * terdeteksi selama durasi tetap, baru di akhir di-resample ke jumlah frame yang model butuhkan
- * (`KeypointResampler` untuk 30 frame CNNsa-BiLSTM, `ClipPreprocessor` untuk 16 frame MViTv2) --
- * jadi hasil akhir tidak bergantung sama sekali pada throughput device saat itu.
+ * terdeteksi selama durasi tetap, baru di akhir disesuaikan ke jumlah frame yang model butuhkan --
+ * `KeypointSequenceBuilder` (CENTER-CROP 30 frame tengah + zero-pad, PERSIS replikasi training,
+ * lihat PROGRESS.md soal kenapa bukan resample) untuk CNNsa-BiLSTM, `ClipPreprocessor` (linspace
+ * sampling, replikasi training MViTv2) untuk 16 frame MViTv2.
  */
 class CameraActivity : AppCompatActivity() {
 
@@ -71,10 +73,33 @@ class CameraActivity : AppCompatActivity() {
     private val isRecording = AtomicBoolean(false)
     private var recordingStartElapsedMs = 0L
 
-    // SEMUA vector keypoint yang diterima selama sesi rekam (bukan rolling window 30 lagi) --
-    // di-resample ke 30 frame oleh KeypointResampler tepat sebelum predict. Disentuh dari thread
-    // MediaPipe (nulis) dan main thread (baca+clear di awal/akhir sesi), makanya synchronized.
-    private val capturedFrames = mutableListOf<FloatArray>()
+    // SEMUA (elapsed sejak recordingStartElapsedMs, vector keypoint) yang DITERIMA MediaPipe
+    // selama sesi rekam, TAPI cuma yang lolos throttle ~15fps (lihat nextCaptureFrameElapsedMs)
+    // yang masuk ke sini -- lihat catatan di bawah kenapa throttle ini perlu. Timestamp ikut
+    // disimpan (bukan cuma vector) karena KeypointSequenceBuilder sekarang memilih jendela 30
+    // frame berbasis RENTANG WAKTU, bukan index array -- lihat dokumentasi lengkap di
+    // KeypointSequenceBuilder.kt kenapa index array saja tidak cukup di device yang throughput-nya
+    // di bawah 15fps. Disentuh dari thread MediaPipe (nulis) dan main thread (baca+clear di
+    // awal/akhir sesi), makanya synchronized.
+    private val capturedFrames = mutableListOf<Pair<Long, FloatArray>>()
+
+    // Throttle rate SAMA dengan target_fps di PreProcessing/Scripts/frame_extractor.py (repo riset
+    // ML) -- training mengasumsikan video diekstrak pada ~15fps efektif SEBELUM di-center-crop 30
+    // frame. Device live berbeda-beda kecepatan throughput MediaPipe-nya (device kuat bisa kirim
+    // hasil deteksi jauh lebih sering dari 15/detik, device lemah bisa lebih jarang) -- kalau SEMUA
+    // hasil deteksi diterima mentah-mentah, maka 30 frame yang di-crop dari tengah merepresentasikan
+    // rentang WAKTU GERAKAN ASLI yang beda-beda tergantung device (device kuat: 30 frame cuma
+    // beberapa ratus ms gerakan; device lemah: 30 frame bisa 2+ detik gerakan) -- BUKAN lagi ~2
+    // detik yang diasumsikan training (30 frame / 15fps). Throttle ke ~15fps di titik capture ini
+    // menyamakan pacing gerakan yang di-crop nanti supaya konsisten LINTAS DEVICE, mendekati asumsi
+    // training, terlepas dari seberapa cepat/lambat device memprosesnya.
+    private var nextCaptureFrameElapsedMs = 0L
+
+    // Total hasil deteksi MediaPipe yang BENERAN diterima selama sesi rekam, SEBELUM throttle di
+    // atas -- murni untuk diagnostik/logging (dibandingkan capturedFrames.size yang SUDAH
+    // di-throttle), supaya throughput asli tiap device kelihatan di layar Evaluasi. AtomicInteger
+    // karena cuma perlu increment atomik, tidak perlu lock bareng capturedFrames.
+    private val rawDetectionCount = AtomicInteger(0)
 
     // Untuk histori: dari seluruh durasi rekam, cuma simpan 1 komposit tiap HISTORY_FRAME_INTERVAL_MS
     // (10 total) biar hemat storage -- lihat HistoryStore untuk retensi 5 sesi terakhir. Dasarnya
@@ -93,6 +118,18 @@ class CameraActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "CameraActivity"
         private const val RECORDING_DURATION_MS = 5000L
+
+        // Target 15fps -- SAMA dengan target_fps di frame_extractor.py (repo riset ML). Lihat
+        // catatan di atas field nextCaptureFrameElapsedMs untuk alasan lengkapnya.
+        private const val TARGET_CAPTURE_FPS = 15L
+        private const val TARGET_CAPTURE_FRAME_INTERVAL_MS = 1000L / TARGET_CAPTURE_FPS
+
+        // Sama seperti min_frames di PreProcessing/Config/dataset_config.py (repo riset ML) --
+        // video training dengan < 10 frame terdeteksi di-skip sepenuhnya dari dataset, jadi model
+        // tidak pernah belajar dari sequence yang sebagian besarnya nol/padding. Sesi rekam live
+        // dengan frame lebih sedikit dari ini diperlakukan sama: jangan dipaksa predict.
+        private const val MIN_KEYPOINT_FRAMES = 10
+
         private const val HISTORY_FRAMES_PER_SESSION = 10
         private const val HISTORY_FRAME_INTERVAL_MS = RECORDING_DURATION_MS / HISTORY_FRAMES_PER_SESSION
         private const val CNNSA_BILSTM_SIZE_LABEL = "14.65 MB"
@@ -184,13 +221,24 @@ class CameraActivity : AppCompatActivity() {
     // begitu 30 frame terkumpul) -- lihat doc class di atas kenapa desain lama gagal terus.
     private fun startRecording() {
         if (!isRecording.compareAndSet(false, true)) return
-        synchronized(capturedFrames) { capturedFrames.clear() }
+        synchronized(capturedFrames) {
+            capturedFrames.clear()
+            nextCaptureFrameElapsedMs = 0L
+        }
+        rawDetectionCount.set(0)
         synchronized(pendingHistoryFrames) {
             pendingHistoryFrames.clear()
             nextHistoryFrameElapsedMs = 0L
         }
         synchronized(mvitRawFrames) { mvitRawFrames.clear() }
         recordingStartElapsedMs = SystemClock.elapsedRealtime()
+
+        // Overlay live dimatikan SELAMA sesi rekam (dikembalikan begitu selesai lewat
+        // finishRecordingAndPredict) -- menghemat kerja main thread/render tiap frame supaya
+        // MediaPipe dapat porsi CPU lebih besar untuk deteksi, bukan berbagi dengan Canvas redraw
+        // terus-menerus. Overlay di Riwayat (OverlayRenderer.renderComposite, dipanggil terpisah
+        // di bawah) TIDAK terpengaruh -- itu jalur kode lain yang tetap jalan seperti biasa.
+        binding.handOverlay.clear()
 
         binding.btnRecord.isEnabled = false
         binding.btnRecord.text = getString(R.string.btn_recording)
@@ -204,12 +252,29 @@ class CameraActivity : AppCompatActivity() {
     // atau thread executor CameraX). HARUS tetap murah -- lihat catatan mvitRawFrames di atas
     // soal kenapa kerja berat (rotate/resize bitmap) tidak boleh terjadi di sini.
     private fun onDetectionResult(bitmap: Bitmap, vector: FloatArray, overlay: HandOverlayData) {
-        mainHandler.post { binding.handOverlay.update(overlay) }
-
-        if (!isRecording.get()) return
-        synchronized(capturedFrames) { capturedFrames.add(vector) }
+        // Overlay live cuma diupdate DI LUAR sesi rekam (browsing biasa) -- selama merekam,
+        // digambar sekali sebagai blank oleh startRecording() dan dibiarkan begitu, supaya
+        // main thread tidak sibuk redraw Canvas tiap frame (lihat catatan di startRecording()).
+        // Guide box statis di layout tetap kasih bantuan framing selama rekam berlangsung.
+        if (!isRecording.get()) {
+            mainHandler.post { binding.handOverlay.update(overlay) }
+            return
+        }
+        rawDetectionCount.incrementAndGet()
 
         val elapsed = SystemClock.elapsedRealtime() - recordingStartElapsedMs
+
+        // Throttle ke ~15fps (TARGET_CAPTURE_FRAME_INTERVAL_MS) supaya pacing gerakan yang nanti
+        // di-center-crop KeypointSequenceBuilder konsisten lintas device -- lihat catatan panjang
+        // di deklarasi nextCaptureFrameElapsedMs di atas. Timestamp (elapsed) ikut disimpan
+        // bersama vector -- dipakai KeypointSequenceBuilder untuk memilih jendela berbasis waktu.
+        synchronized(capturedFrames) {
+            if (elapsed >= nextCaptureFrameElapsedMs) {
+                nextCaptureFrameElapsedMs += TARGET_CAPTURE_FRAME_INTERVAL_MS
+                capturedFrames.add(elapsed to vector)
+            }
+        }
+
         val shouldSaveHistoryFrame = synchronized(pendingHistoryFrames) {
             if (elapsed >= nextHistoryFrameElapsedMs && pendingHistoryFrames.size < HISTORY_FRAMES_PER_SESSION) {
                 nextHistoryFrameElapsedMs += HISTORY_FRAME_INTERVAL_MS
@@ -238,12 +303,13 @@ class CameraActivity : AppCompatActivity() {
         val keypointFrames = synchronized(capturedFrames) { capturedFrames.toList().also { capturedFrames.clear() } }
         val historyFrames = synchronized(pendingHistoryFrames) { pendingHistoryFrames.toList().also { pendingHistoryFrames.clear() } }
         val mvitFrames = synchronized(mvitRawFrames) { mvitRawFrames.toList().also { mvitRawFrames.clear() } }
+        val rawFrameCount = rawDetectionCount.get()
 
         binding.btnRecord.text = getString(R.string.btn_processing)
         binding.predictionText.text = getString(R.string.recording_processing)
 
         backgroundExecutor.execute {
-            if (keypointFrames.isEmpty()) {
+            if (keypointFrames.size < MIN_KEYPOINT_FRAMES) {
                 mainHandler.post {
                     binding.btnRecord.isEnabled = true
                     binding.btnRecord.text = getString(R.string.btn_record)
@@ -253,7 +319,7 @@ class CameraActivity : AppCompatActivity() {
             }
 
             val cnnStart = System.nanoTime()
-            val cnnTopK = onnxPredictor.predict(KeypointResampler.resampleAndFlatten(keypointFrames))
+            val cnnTopK = onnxPredictor.predict(KeypointSequenceBuilder.alignToSequenceLength(keypointFrames))
             val cnnLatencyMs = (System.nanoTime() - cnnStart) / 1_000_000
             val (topLabelIndex, topConfidence) = cnnTopK.first()
             val cnnResultLine = getString(
@@ -272,7 +338,10 @@ class CameraActivity : AppCompatActivity() {
             // satu entri histori memuat breakdown top-3 KEDUA model sekaligus -- boleh nunggu lebih
             // lama karena ini semua sudah di background thread, tidak ada yang nge-block UI.
             if (historyFrames.isNotEmpty()) {
-                historyStore.saveSession(cnnPredictions, mvitPredictions, cnnLatencyMs, mvitLatencyMs, historyFrames)
+                historyStore.saveSession(
+                    cnnPredictions, mvitPredictions, cnnLatencyMs, mvitLatencyMs, historyFrames,
+                    rawFrameCount, keypointFrames.size
+                )
             }
 
             mainHandler.post {

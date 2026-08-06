@@ -19,6 +19,16 @@ import kotlin.math.exp
  *
  * Output is "logits" ONLY (shape (1,32), no attn_weights) -- different from OnnxPredictor's model
  * which exposes both.
+ *
+ * PERFORMANCE: MViTv2 is a heavy transformer (~34M params, (1,3,16,224,224) input) and was
+ * observed taking 18-78 SECONDS per inference on a Poco M4 Pro (CPU-only, no NPU) vs ~400ms on a
+ * desktop i7 benchmark. A `setIntraOpNumThreads(availableProcessors())` tweak was tried here and
+ * REVERTED -- it made latency WORSE (~200s observed) instead of better, likely because Poco M4
+ * Pro's Helio G96 is big.LITTLE (2 fast Cortex-A76 + 6 slow Cortex-A55): forcing ORT to spread
+ * intra-op parallelism across all 8 cores means every parallel region waits on the slowest A55
+ * thread, which can lose to just letting ORT use its own (apparently more conservative) default.
+ * Left at ORT's default (no explicit thread count) -- if revisiting, try a SMALL explicit count
+ * (e.g. 2, matching the fast cores) rather than all cores, and measure before keeping it.
  */
 class MvitPredictor(context: Context) {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()

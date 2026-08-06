@@ -9,18 +9,20 @@ import android.util.AttributeSet
 import android.view.View
 
 /**
- * Draws a bounding box + 21-point skeleton per detected hand on top of the front-camera preview.
+ * Draws a bounding box + 21-point skeleton per detected hand on top of the back-camera preview
+ * (see AppCameraController/rencana_fix_handedness.md Opsi A for why back, not front/selfie).
  *
- * MediaPipe landmarks are normalized [0,1] against the RAW analysis bitmap (the un-rotated,
- * un-mirrored frame HandLandmarker actually ran on). PreviewView, however, shows that same
- * camera stream rotated to the device's natural orientation AND mirrored horizontally (CameraX's
- * default behavior for the front camera), scaled with center-crop to fill the view. toViewSpace()
- * replicates both steps so a box drawn here lands on the same spot as the hand in the preview.
+ * MediaPipe landmarks are normalized [0,1] against the RAW analysis bitmap (the un-rotated
+ * frame HandLandmarker actually ran on). PreviewView shows that same camera stream rotated to the
+ * device's natural orientation, scaled with center-crop to fill the view -- NO mirroring, since
+ * CameraX/PreviewView never mirrors the back camera (only the front/selfie camera gets that
+ * treatment). toViewSpace() replicates the rotation+scale so a box drawn here lands on the same
+ * spot as the hand in the preview.
  *
- * NOT yet verified on physical hardware -- geometry (rotation direction, mirror) is derived from
- * CameraX/MediaPipe documented conventions but has the same "unverified" status as the
- * handedness/mirroring sanity check tracked in PROGRESS.md. If boxes are offset or mirrored
- * wrong on-device, that's the first place to look.
+ * Box POSITION confirmed correct on physical hardware with the FRONT camera (2026-08-01,
+ * screenshot) -- the rotation/scale math is unchanged after switching to the back camera, only
+ * the (now-removed) mirror step differed, so this should still hold, but re-verify on-device
+ * after the camera switch.
  */
 class HandOverlayView @JvmOverloads constructor(
     context: Context,
@@ -103,9 +105,7 @@ class HandOverlayView @JvmOverloads constructor(
         val viewX = rotated.x * rotW * scale + offsetX
         val viewY = rotated.y * rotH * scale + offsetY
 
-        // Front camera preview is mirrored horizontally by CameraX/PreviewView by default.
-        val mirroredX = width - viewX
-        return PointF(mirroredX, viewY)
+        return PointF(viewX, viewY)
     }
 
     private fun rotateNormalized(pt: PointF, rotationDegrees: Int): PointF =

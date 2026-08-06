@@ -12,7 +12,8 @@
     <string name="btn_processing">Memproses...</string>
     <string name="recording_countdown">Merekam... %1$d detik lagi, lakukan gerakan sekarang</string>
     <string name="recording_processing">Memproses hasil...</string>
-    <string name="recording_no_hand">Tidak ada tangan terdeteksi selama rekaman, coba lagi</string>
+    <string name="recording_no_hand">Tangan tidak cukup lama terdeteksi selama rekaman, coba lagi</string>
+    <string name="guide_box_hint">Posisikan tangan di sini</string>
     <string name="btn_history">Riwayat</string>
     <string name="history_title">Riwayat Prediksi</string>
     <string name="btn_close_history">Tutup</string>
@@ -35,7 +36,9 @@
     <string name="eval_col_cnn">CNNsa-BiLSTM</string>
     <string name="eval_col_mvit">MViTv2</string>
     <string name="eval_mvit_na">Tidak tersedia</string>
+    <string name="eval_session_frame_info">#%1$d\nFrame: %2$d mentah\n%3$d dipakai</string>
     <string name="eval_model_size">Ukuran model: CNNsa-BiLSTM 14.65 MB -- MViTv2 143 MB</string>
     <string name="eval_chart_title">Grafik Latensi Inferensi (ms)</string>
+    <string name="eval_detail_note">Yang dievaluasi tiap sesi: (1) breakdown top-3 prediksi tiap model (bukan cuma label teratas), (2) latency inferensi (ms), (3) jumlah frame mentah hasil deteksi MediaPipe dibanding frame yang benar-benar dipakai model setelah throttle ~15fps (target training) -- device yang jauh lebih cepat/lambat dari 15fps akan terlihat dari selisih kedua angka ini, (4) ukuran model.</string>
     <string name="eval_accuracy_note">Confidence yang ditampilkan BUKAN akurasi -- tidak ada ground truth (jawaban benar tiap gestur) di layar ini. Akurasi resmi berasal dari evaluasi test set di desktop.</string>
 </resources>

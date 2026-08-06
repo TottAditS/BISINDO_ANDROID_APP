@@ -60,6 +60,15 @@
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp"
+                android:text="@string/eval_detail_note"
+                android:textColor="#52514E"
+                android:textSize="12sp" />
+
             <LinearLayout
                 android:id="@+id/tableContainer"
                 android:layout_width="match_parent"

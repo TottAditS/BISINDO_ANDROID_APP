@@ -40,18 +40,14 @@ object OverlayRenderer {
     }
 
     /**
-     * Rotates+mirrors [source] to match what PreviewView actually shows on screen (front camera
-     * mirrored by CameraX/PreviewView) -- see HandOverlayView's class doc for the rationale.
-     * Unverified on physical hardware, same caveat as the live overlay. No drawing -- used
-     * wherever a CLEAN (no box/skeleton) correctly-oriented frame is needed, e.g. MViTv2's input
-     * clip, as opposed to renderComposite() below which draws on top of this.
+     * Rotates [source] to match the device's natural orientation. No mirroring -- back camera
+     * (AppCameraController) is never mirrored by CameraX/PreviewView, unlike the front camera.
+     * No drawing -- used wherever a CLEAN (no box/skeleton) correctly-oriented frame is needed,
+     * e.g. MViTv2's input clip, as opposed to renderComposite() below which draws on top of this.
      */
     fun orientForDisplay(source: Bitmap, rotationDegrees: Int): Bitmap {
         val normalizedRotation = ((rotationDegrees % 360) + 360) % 360
-        val matrix = Matrix().apply {
-            postRotate(normalizedRotation.toFloat())
-            postScale(-1f, 1f)
-        }
+        val matrix = Matrix().apply { postRotate(normalizedRotation.toFloat()) }
         val transformed = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
         return transformed.copy(Bitmap.Config.ARGB_8888, true)
     }
@@ -67,7 +63,7 @@ object OverlayRenderer {
         for (hand in data.hands) {
             val points = hand.points.map { pt ->
                 val r = rotateNormalized(pt, rotationDegrees)
-                PointF(rotW - r.x * rotW, r.y * rotH)
+                PointF(r.x * rotW, r.y * rotH)
             }
             drawHand(canvas, points, hand.label)
         }

@@ -12,8 +12,14 @@ import com.example.bisindorecognizer.databinding.ActivityEvaluationBinding
 
 /**
  * Ringkasan atas sesi Riwayat yang tersimpan (maks 5, lihat HistoryStore) -- tabel perbandingan
- * CNNsa-BiLSTM vs MViTv2 (prediksi teratas + confidence + latency per sesi) plus grafik batang
- * latency, buat kebutuhan Bab 4 laporan skripsi (trade-off akurasi-vs-efisiensi).
+ * CNNsa-BiLSTM vs MViTv2 per sesi, plus grafik batang latency, buat kebutuhan Bab 4 laporan
+ * skripsi (trade-off akurasi-vs-efisiensi). Isi tabel per sesi:
+ * - Breakdown TOP-3 prediksi tiap model (bukan cuma top-1), format sama dengan Riwayat.
+ * - Latency inferensi (ms) tiap model.
+ * - Jumlah frame mentah (semua hasil deteksi MediaPipe) vs frame yang benar-benar dipakai model
+ *   (setelah throttle ~15fps di CameraActivity) -- diagnostik variasi throughput antar device,
+ *   lihat catatan di CameraActivity.nextCaptureFrameElapsedMs.
+ * - Ukuran model (statis, sama utk semua sesi).
  *
  * PENTING: ini BUKAN evaluasi akurasi -- tidak ada ground truth (jawaban benar tiap gestur) di
  * layar ini, jadi confidence yang ditampilkan TIDAK SAMA dengan akurasi. Akurasi resmi berasal
@@ -48,25 +54,32 @@ class EvaluationActivity : AppCompatActivity() {
         )
     }
 
+    // Tiap sel model menampilkan breakdown TOP-3 (bukan cuma top-1) -- format sama persis dengan
+    // yang dipakai HistoryPlaybackActivity ("90.0% Maaf, 8.0% Yakin, 2.0% Saya"), lewat fungsi
+    // shared formatPredictionBreakdown() supaya konsisten di kedua layar. Kolom Sesi tambah info
+    // jumlah frame mentah vs yang dipakai model, buat diagnostik variasi throughput antar device
+    // (lihat catatan nextCaptureFrameElapsedMs di CameraActivity).
     private fun buildTable(sessions: List<HistorySession>) {
         addTableRow(
             getString(R.string.eval_col_session), getString(R.string.eval_col_cnn), getString(R.string.eval_col_mvit),
             header = true
         )
         sessions.forEachIndexed { index, session ->
-            val cnn = session.cnnPredictions.firstOrNull()
-            val cnnText = if (cnn != null) {
-                "${cnn.label} (${"%.1f".format(cnn.confidence * 100)}%)\n${session.cnnLatencyMs} ms"
+            val sessionText = getString(
+                R.string.eval_session_frame_info,
+                index + 1, session.rawDetectionCount, session.capturedKeypointCount
+            )
+            val cnnText = if (session.cnnPredictions.isNotEmpty()) {
+                "${formatPredictionBreakdown(session.cnnPredictions)}\n${session.cnnLatencyMs} ms"
             } else {
                 "-"
             }
-            val mvit = session.mvitPredictions.firstOrNull()
-            val mvitText = if (mvit != null && session.mvitLatencyMs != null) {
-                "${mvit.label} (${"%.1f".format(mvit.confidence * 100)}%)\n${session.mvitLatencyMs} ms"
+            val mvitText = if (session.mvitPredictions.isNotEmpty() && session.mvitLatencyMs != null) {
+                "${formatPredictionBreakdown(session.mvitPredictions)}\n${session.mvitLatencyMs} ms"
             } else {
                 getString(R.string.eval_mvit_na)
             }
-            addTableRow("#${index + 1}", cnnText, mvitText, header = false)
+            addTableRow(sessionText, cnnText, mvitText, header = false)
         }
     }
 
