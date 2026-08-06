@@ -43,6 +43,20 @@ import kotlin.math.sqrt
  * last [LABEL_HISTORY_SIZE] raw labels -- a single flickered frame is outvoted by the stable
  * majority, but a real, sustained handedness change (e.g. user switches which hand signs) still
  * comes through once it dominates the window.
+ *
+ * MISDETECTION (found 2026-08-06 reviewing Riwayat flipbook screenshots from live tests): even
+ * above MediaPipe's own min_hand_detection_confidence (0.5), the landmarker occasionally locks
+ * onto a non-hand region for a run of consecutive frames -- observed boxes on a shoulder/collar,
+ * and BOTH detected hands labeled "Left" simultaneously (anatomically impossible, since each
+ * hand's handedness is classified independently there's no built-in exclusivity). A run of
+ * several bad consecutive frames is NOT something [smoothedLabels]'s 5-frame majority vote can
+ * fix (it assumes flicker is the minority in its window) -- it just smooths the wrong region into
+ * the tracked history. [plausibleHandIndices] filters BEFORE smoothing: drops any hand whose
+ * handedness classification score is below [MIN_HANDEDNESS_CONFIDENCE] (stricter than the base
+ * landmarker threshold), and de-duplicates same-label hands (keeps only the higher-confidence
+ * one) -- a hand that fails this is treated as "not detected" for that frame, same zero-vector
+ * convention already used for a genuinely absent hand, rather than feeding a plausibly-wrong
+ * region into the model as if it were real hand data.
  */
 class HandLandmarkExtractor(
     context: Context,
@@ -100,42 +114,61 @@ class HandLandmarkExtractor(
 
     private fun onResult(result: HandLandmarkerResult, input: MPImage) {
         busy.set(false)
-        val labels = smoothedLabels(result)
-        val vector = buildVector126(result, labels)
-        val overlay = buildOverlayData(result, labels, input.width, input.height, lastRotationDegrees)
+        val keptIndices = plausibleHandIndices(result)
+        val labels = smoothedLabels(result, keptIndices)
+        val vector = buildVector126(result, keptIndices, labels)
+        val overlay = buildOverlayData(result, keptIndices, labels, input.width, input.height, lastRotationDegrees)
         onDetectionResult(lastBitmap, vector, overlay)
+    }
+
+    // Lihat "MISDETECTION" di doc class. Dipanggil SEBELUM smoothedLabels() -- hand yang tidak
+    // lolos di sini tidak pernah masuk tracking/history sama sekali, diperlakukan persis seperti
+    // "tidak terdeteksi" (vector nol, tidak digambar overlay) untuk frame ini.
+    private fun plausibleHandIndices(result: HandLandmarkerResult): List<Int> {
+        val confidences = result.handedness().map { it[0].score() }
+        val labels = result.handedness().map { it[0].categoryName() }
+        val candidates = confidences.indices.filter { confidences[it] >= MIN_HANDEDNESS_CONFIDENCE }
+
+        // De-dupe: 2 kandidat dengan label sama (mustahil secara fisik) -- simpan yang
+        // confidence-nya lebih tinggi saja, buang sisanya.
+        return candidates
+            .groupBy { labels[it] }
+            .map { (_, idxs) -> idxs.maxByOrNull { confidences[it] }!! }
     }
 
     // Lihat doc class untuk kenapa ini ada. Dipanggil SEKALI per hasil deteksi (bukan per
     // konsumen) supaya buildOverlayData() dan buildVector126() melihat label yang SAMA persis.
-    private fun smoothedLabels(result: HandLandmarkerResult): List<String> {
-        val wrists = result.landmarks().map { PointF(it[0].x(), it[0].y()) }
-        val rawLabels = result.handedness().map { it[0].categoryName() } // "Left" atau "Right"
+    // Hanya memproses [keptIndices] (sudah lolos filter plausibilitas) -- key Map yang
+    // dikembalikan adalah index ASLI di result.landmarks()/handedness(), bukan posisi di keptIndices.
+    private fun smoothedLabels(result: HandLandmarkerResult, keptIndices: List<Int>): Map<Int, String> {
+        val wrists = keptIndices.associateWith { PointF(result.landmarks()[it][0].x(), result.landmarks()[it][0].y()) }
+        val rawLabels = keptIndices.associateWith { result.handedness()[it][0].categoryName() }
 
         val usedTracked = mutableSetOf<Int>()
-        val matched = arrayOfNulls<TrackedHand>(wrists.size)
-        for (i in wrists.indices) {
+        val matched = keptIndices.associateWith { idx ->
             var bestIdx = -1
             var bestDist = Float.MAX_VALUE
             for (j in trackedHands.indices) {
                 if (j in usedTracked) continue
-                val d = distance(wrists[i], trackedHands[j].wrist)
+                val d = distance(wrists.getValue(idx), trackedHands[j].wrist)
                 if (d < bestDist) {
                     bestDist = d
                     bestIdx = j
                 }
             }
             if (bestIdx != -1 && bestDist < MAX_TRACKING_DISTANCE) {
-                matched[i] = trackedHands[bestIdx]
                 usedTracked.add(bestIdx)
+                trackedHands[bestIdx]
+            } else {
+                null
             }
         }
 
         val nextTrackedHands = mutableListOf<TrackedHand>()
-        val smoothed = wrists.indices.map { i ->
-            val tracked = matched[i] ?: TrackedHand(wrists[i])
-            tracked.wrist = wrists[i]
-            tracked.labelHistory.addLast(rawLabels[i])
+        val smoothed = keptIndices.associateWith { idx ->
+            val tracked = matched.getValue(idx) ?: TrackedHand(wrists.getValue(idx))
+            tracked.wrist = wrists.getValue(idx)
+            tracked.labelHistory.addLast(rawLabels.getValue(idx))
             if (tracked.labelHistory.size > LABEL_HISTORY_SIZE) tracked.labelHistory.removeFirst()
             nextTrackedHands.add(tracked)
             tracked.labelHistory.groupingBy { it }.eachCount().maxByOrNull { it.value }!!.key
@@ -153,22 +186,23 @@ class HandLandmarkExtractor(
 
     private fun buildOverlayData(
         result: HandLandmarkerResult,
-        labels: List<String>,
+        keptIndices: List<Int>,
+        labels: Map<Int, String>,
         imageWidth: Int,
         imageHeight: Int,
         rotationDegrees: Int
     ): HandOverlayData {
-        val hands = result.landmarks().indices.map { i ->
+        val hands = keptIndices.map { i ->
             val points = result.landmarks()[i].map { PointF(it.x(), it.y()) }
-            OverlayHand(labels[i], points)
+            OverlayHand(labels.getValue(i), points)
         }
         return HandOverlayData(hands, imageWidth, imageHeight, rotationDegrees)
     }
 
-    private fun buildVector126(result: HandLandmarkerResult, labels: List<String>): FloatArray {
+    private fun buildVector126(result: HandLandmarkerResult, keptIndices: List<Int>, labels: Map<Int, String>): FloatArray {
         val vector = FloatArray(126)
-        for (i in result.landmarks().indices) {
-            val offset = if (labels[i] == "Left") 0 else 63
+        for (i in keptIndices) {
+            val offset = if (labels.getValue(i) == "Left") 0 else 63
             val lm = result.landmarks()[i]
             val wrist = lm[0]
             val midMcp = lm[9]
@@ -207,5 +241,15 @@ class HandLandmarkExtractor(
         // masih dianggap tangan fisik yang sama -- gerakan tangan lebih jauh dari ini di 1 frame
         // dianggap tangan baru (history mulai dari nol lagi). Nilai awal, belum ditest di device.
         private const val MAX_TRACKING_DISTANCE = 0.25f
+
+        // Ambang confidence handedness classification -- SENGAJA lebih ketat dari
+        // min_hand_detection_confidence (0.5) yang dipakai HandLandmarkerOptions di atas. Lihat
+        // "MISDETECTION" di doc class: box yang nyasar ke bahu/wajah yang diamati di Riwayat masih
+        // lolos ambang 0.5 milik landmarker sendiri -- ambang tambahan ini di titik BERBEDA
+        // (skor klasifikasi Left/Right per hand, bukan skor deteksi awal) buat nyaring kandidat
+        // yang lolos deteksi tapi klasifikasi handedness-nya sendiri tidak yakin. Nilai awal,
+        // belum ditest di device -- turunkan kalau tangan asli malah sering ke-reject (tidak
+        // pernah kelihatan overlay-nya), naikkan kalau box salah masih lolos.
+        private const val MIN_HANDEDNESS_CONFIDENCE = 0.8f
     }
 }
