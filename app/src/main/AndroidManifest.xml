@@ -41,5 +41,18 @@
             android:name=".history.EvaluationActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>
+
+        <!-- Tanpa ini, share Intent buat GIF hasil export bakal FileUriExposedException di API 24+.
+             content:// lewat FileProvider tetap tidak butuh izin storage apapun (file ada di
+             cache app-private, cuma dibuka sementara ke app penerima lewat grant URI permission). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
     </application>
 </manifest>

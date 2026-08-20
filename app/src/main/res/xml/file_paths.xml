@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- GIF hasil export ditulis ke context.cacheDir/gif_exports/ (lihat GifExporter.kt),
+         cache-path di sini WAJIB cocok dengan subfolder itu supaya FileProvider mau meng-grant-nya. -->
+    <cache-path name="gif_exports" path="gif_exports/"/>
+    <!-- Salinan sequence.json (lihat SequenceExporter.kt), sengaja disalin ke cache terpisah dari
+         files/history/ asli, supaya FileProvider cuma meng-grant file JSON ini, bukan seluruh
+         folder Riwayat (yang juga berisi frame JPEG sesi lain). -->
+    <cache-path name="sequence_exports" path="sequence_exports/"/>
+</paths>

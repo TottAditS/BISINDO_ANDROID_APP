@@ -19,6 +19,10 @@ import com.example.bisindorecognizer.databinding.ActivityEvaluationBinding
  * - Jumlah frame mentah (semua hasil deteksi MediaPipe) vs frame yang benar-benar dipakai model
  *   (setelah throttle ~15fps di CameraActivity) -- diagnostik variasi throughput antar device,
  *   lihat catatan di CameraActivity.nextCaptureFrameElapsedMs.
+ * - CPU usage (%) dan RAM (PSS, MB) tiap model saat predict() -- lihat
+ *   [com.example.bisindorecognizer.metrics.PerformanceMetrics] -- ditambahkan untuk menjawab
+ *   janji Ruang Lingkup Bab 1 skripsi soal "penggunaan memori... serta konsumsi CPU" yang
+ *   sebelumnya belum pernah diukur.
  * - Ukuran model (statis, sama utk semua sesi).
  *
  * PENTING: ini BUKAN evaluasi akurasi -- tidak ada ground truth (jawaban benar tiap gestur) di
@@ -70,12 +74,20 @@ class EvaluationActivity : AppCompatActivity() {
                 index + 1, session.rawDetectionCount, session.capturedKeypointCount
             )
             val cnnText = if (session.cnnPredictions.isNotEmpty()) {
-                "${formatPredictionBreakdown(session.cnnPredictions)}\n${session.cnnLatencyMs} ms"
+                val perf = getString(
+                    R.string.eval_perf_info, session.cnnCpuPercent, session.cnnRamKb / 1024f
+                )
+                "${formatPredictionBreakdown(session.cnnPredictions)}\n${session.cnnLatencyMs} ms\n$perf"
             } else {
                 "-"
             }
             val mvitText = if (session.mvitPredictions.isNotEmpty() && session.mvitLatencyMs != null) {
-                "${formatPredictionBreakdown(session.mvitPredictions)}\n${session.mvitLatencyMs} ms"
+                val perf = if (session.mvitCpuPercent != null && session.mvitRamKb != null) {
+                    getString(R.string.eval_perf_info, session.mvitCpuPercent, session.mvitRamKb / 1024f)
+                } else {
+                    ""
+                }
+                "${formatPredictionBreakdown(session.mvitPredictions)}\n${session.mvitLatencyMs} ms\n$perf"
             } else {
                 getString(R.string.eval_mvit_na)
             }

@@ -6,6 +6,7 @@ import android.graphics.PointF
 import android.util.Log
 import com.example.bisindorecognizer.overlay.HandOverlayData
 import com.example.bisindorecognizer.overlay.OverlayHand
+import com.example.bisindorecognizer.overlay.OverlayRenderer
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
@@ -27,12 +28,36 @@ import kotlin.math.sqrt
  * bundled in one callback (rather than separate ones) so callers don't have to rely on call
  * order to correlate them.
  *
- * HANDEDNESS (see rencana_fix_handedness.md): MediaPipe's Left/Right `handedness()` assumes
- * selfie-mirrored input. This app uses the BACK camera (AppCameraController), which needs no
- * mirroring at any stage -- so `categoryName()` is the correct label MOST of the time. (An
- * earlier attempt kept the front camera and either mirrored the bitmap pre-MediaPipe -- broke
- * overlay geometry, mirror/rotate don't commute for 90/270deg -- or flipped the label string
- * instead; both were reverted once the camera itself switched to back, which needs neither.)
+ * HANDEDNESS + ROTATION (root-caused 2026-08-20, see PROGRESS.md for the full writeup): the
+ * previous 4 bugfixes (back camera, time-based windowing, lower ImageAnalysis resolution,
+ * misdetection filtering) still left CNNsa-BiLSTM near-total live failure while MViTv2 stayed
+ * accurate on the same recordings. Diagnosed by comparing exported `sequence.json` values (see
+ * history/SequenceExporter.kt) from 5 live sessions against real desktop-extracted training
+ * samples for the SAME 5 gloss classes, across 5 different training signers -- TWO compounding
+ * bugs found, neither of which is a model-quality problem:
+ *
+ * 1. Handedness swap: switching to the BACK camera (rencana_fix_handedness.md) did NOT make
+ *    `categoryName()` match the desktop training pipeline's labels, contrary to what was assumed
+ *    when that switch was made. Desktop keypoints landed in the "Left" half ([0:63]) essentially
+ *    100% of the time; live keypoints landed in the "Right" half ([63:126]) essentially 100% of
+ *    the time -- a clean, total inversion, not noise.
+ * 2. Missing rotation: the raw sensor bitmap handed to MediaPipe here is NEVER rotated to upright
+ *    display orientation before `detectAsync()` -- unlike CameraActivity's MViTv2 path, which
+ *    calls `OverlayRenderer.orientForDisplay()` first. This is the likely reason MViTv2 kept
+ *    working live while CNNsa-BiLSTM didn't: MViTv2's Android preprocessing happened to already
+ *    match training, CNNsa-BiLSTM's didn't.
+ *
+ * Both were validated together, offline, against 5 real recorded live sessions replayed through
+ * the actual desktop-trained ONNX model (not just theory): swap-the-half + rotate-(x,y)-90deg
+ * turned 0/5 correct into 5/5 correct at ~100% confidence each. [buildVector126] below applies
+ * both corrections -- `"Left" -> 63, "Right" -> 0` for the swap (see inline comment there), and
+ * `OverlayRenderer.rotateNormalized()` (the SAME already-hardware-verified rotation the overlay
+ * uses) on each landmark before wrist-relative normalization, using whatever `rotationDegrees`
+ * this frame actually reported -- not a hardcoded angle, so it stays correct regardless of device
+ * orientation. The overlay/HandOverlayView/renderComposite path is deliberately left untouched;
+ * only the model-input vector needed correcting. The underlying WHY (exactly how the training
+ * videos were recorded/oriented) is not confirmed -- only that the correction empirically matches
+ * the training distribution.
  *
  * FLICKER: MediaPipe's per-frame classification can still transiently flip for ~1s during fast
  * hand movement (observed on-device) even though it's the same physical hand -- LIVE_STREAM mode
@@ -116,7 +141,7 @@ class HandLandmarkExtractor(
         busy.set(false)
         val keptIndices = plausibleHandIndices(result)
         val labels = smoothedLabels(result, keptIndices)
-        val vector = buildVector126(result, keptIndices, labels)
+        val vector = buildVector126(result, keptIndices, labels, lastRotationDegrees)
         val overlay = buildOverlayData(result, keptIndices, labels, input.width, input.height, lastRotationDegrees)
         onDetectionResult(lastBitmap, vector, overlay)
     }
@@ -199,21 +224,46 @@ class HandLandmarkExtractor(
         return HandOverlayData(hands, imageWidth, imageHeight, rotationDegrees)
     }
 
-    private fun buildVector126(result: HandLandmarkerResult, keptIndices: List<Int>, labels: Map<Int, String>): FloatArray {
+    // ROTATION FIX (confirmed empirically 2026-08-20, see HANDEDNESS SWAP doc above for the
+    // companion fix): the raw sensor bitmap fed to MediaPipe here is NEVER rotated to upright
+    // display orientation before detectAsync() (unlike CameraActivity's MViTv2 path, which calls
+    // OverlayRenderer.orientForDisplay() first) -- so result.landmarks() come back in the raw
+    // landscape sensor frame, ~90deg off from the upright frame the desktop training pipeline's
+    // videos were in. Reusing OverlayRenderer.rotateNormalized() (the SAME, hardware-verified
+    // rotation already used for overlay drawing) on each raw landmark's (x,y) BEFORE wrist-relative
+    // normalization corrects this without needing a second MediaPipe pass on a pre-rotated bitmap.
+    // Rotation is linear and commutes with the subsequent wrist-subtraction/scale-normalization
+    // (a shared additive/scalar term cancels out), so applying it here is equivalent to applying
+    // it to the already-normalized vector -- validated offline against 5 real recorded sessions +
+    // the desktop-trained ONNX model: swapped-half + this rotation = 5/5 correct, ~100% confidence
+    // each, vs 0/5 without it.
+    private fun buildVector126(
+        result: HandLandmarkerResult,
+        keptIndices: List<Int>,
+        labels: Map<Int, String>,
+        rotationDegrees: Int
+    ): FloatArray {
         val vector = FloatArray(126)
         for (i in keptIndices) {
-            val offset = if (labels.getValue(i) == "Left") 0 else 63
+            // INVERTED vs the naive "Left"->0/"Right"->63 mapping -- see HANDEDNESS SWAP doc
+            // above. Confirmed empirically 2026-08-20: live handedness() output is the mirror
+            // image of what the desktop training pipeline produced for the same signs.
+            val offset = if (labels.getValue(i) == "Left") 63 else 0
             val lm = result.landmarks()[i]
-            val wrist = lm[0]
-            val midMcp = lm[9]
-            val dx = midMcp.x() - wrist.x()
-            val dy = midMcp.y() - wrist.y()
-            val dz = midMcp.z() - wrist.z()
+            val wristRaw = lm[0]
+            val wrist = OverlayRenderer.rotateNormalized(PointF(wristRaw.x(), wristRaw.y()), rotationDegrees)
+            val midMcpRaw = lm[9]
+            val midMcp = OverlayRenderer.rotateNormalized(PointF(midMcpRaw.x(), midMcpRaw.y()), rotationDegrees)
+            val dx = midMcp.x - wrist.x
+            val dy = midMcp.y - wrist.y
+            val dz = midMcpRaw.z() - wristRaw.z()
             val scale = sqrt(dx * dx + dy * dy + dz * dz)
             for (j in 0 until 21) {
-                var x = lm[j].x() - wrist.x()
-                var y = lm[j].y() - wrist.y()
-                var z = lm[j].z() - wrist.z()
+                val ptRaw = lm[j]
+                val pt = OverlayRenderer.rotateNormalized(PointF(ptRaw.x(), ptRaw.y()), rotationDegrees)
+                var x = pt.x - wrist.x
+                var y = pt.y - wrist.y
+                var z = ptRaw.z() - wristRaw.z()
                 if (scale >= 1e-6f) {
                     x /= scale; y /= scale; z /= scale
                 }

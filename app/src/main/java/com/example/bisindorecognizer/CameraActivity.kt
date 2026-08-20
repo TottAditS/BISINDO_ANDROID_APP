@@ -20,6 +20,7 @@ import com.example.bisindorecognizer.inference.OnnxPredictor
 import com.example.bisindorecognizer.keypoints.ClipPreprocessor
 import com.example.bisindorecognizer.keypoints.HandLandmarkExtractor
 import com.example.bisindorecognizer.keypoints.KeypointSequenceBuilder
+import com.example.bisindorecognizer.metrics.PerformanceMetrics
 import com.example.bisindorecognizer.overlay.HandOverlayData
 import com.example.bisindorecognizer.overlay.OverlayRenderer
 import java.util.concurrent.ExecutorService
@@ -318,9 +319,13 @@ class CameraActivity : AppCompatActivity() {
                 return@execute
             }
 
+            val cnnSequence = KeypointSequenceBuilder.alignToSequenceLength(keypointFrames)
+            val cnnCpuBefore = PerformanceMetrics.snapshotCpu()
             val cnnStart = System.nanoTime()
-            val cnnTopK = onnxPredictor.predict(KeypointSequenceBuilder.alignToSequenceLength(keypointFrames))
+            val cnnTopK = onnxPredictor.predict(cnnSequence)
             val cnnLatencyMs = (System.nanoTime() - cnnStart) / 1_000_000
+            val cnnCpuPercent = PerformanceMetrics.cpuUsagePercent(cnnCpuBefore, PerformanceMetrics.snapshotCpu())
+            val cnnRamKb = PerformanceMetrics.currentRamKb()
             val (topLabelIndex, topConfidence) = cnnTopK.first()
             val cnnResultLine = getString(
                 R.string.comparison_row, "CNNsa-BiLSTM", LabelMap.gloss(topLabelIndex), topConfidence * 100,
@@ -332,7 +337,7 @@ class CameraActivity : AppCompatActivity() {
                 binding.predictionText.text = "$cnnResultLine\n${getString(R.string.mvit_processing)}"
             }
 
-            val (mvitResultLine, mvitPredictions, mvitLatencyMs) = runMvitComparison(mvitFrames)
+            val (mvitResultLine, mvitPredictions, mvitLatencyMs, mvitCpuPercent, mvitRamKb) = runMvitComparison(mvitFrames)
 
             // Histori disimpan SETELAH MViTv2 selesai (bukan langsung sesudah CNNsa-BiLSTM) supaya
             // satu entri histori memuat breakdown top-3 KEDUA model sekaligus -- boleh nunggu lebih
@@ -340,7 +345,9 @@ class CameraActivity : AppCompatActivity() {
             if (historyFrames.isNotEmpty()) {
                 historyStore.saveSession(
                     cnnPredictions, mvitPredictions, cnnLatencyMs, mvitLatencyMs, historyFrames,
-                    rawFrameCount, keypointFrames.size
+                    rawFrameCount, keypointFrames.size,
+                    cnnCpuPercent, cnnRamKb, mvitCpuPercent, mvitRamKb,
+                    cnnSequence
                 )
             }
 
@@ -352,19 +359,29 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    // 5 field -- Triple bawaan Kotlin cuma mendukung destructuring 3 komponen, jadi data class
+    // sendiri supaya cpuPercent/ramKb ikut destructuring di finishRecordingAndPredict().
+    private data class MvitComparisonResult(
+        val resultLine: String,
+        val predictions: List<RankedPrediction>,
+        val latencyMs: Long?,
+        val cpuPercent: Float?,
+        val ramKb: Int?
+    )
+
     // Dipanggil dari dalam backgroundExecutor (bukan main thread) -- orientForDisplay+resize yang
     // sebelumnya jalan per-frame di thread MediaPipe sekarang dilakukan di sini, sekali per sesi,
     // atas snapshot [frames]. Error/OOM MViTv2 sengaja ditangkap & dilaporkan sebagai teks (bukan
     // di-crash-kan) -- lihat rencana.md poin risiko #3: kegagalan total ITU SENDIRI temuan yang
-    // sah untuk laporan skripsi. @return baris teks buat UI, daftar top-3, dan latency (ms) buat
-    // disimpan ke histori/Evaluasi -- daftar kosong & latency null kalau MViTv2 tidak
+    // sah untuk laporan skripsi. @return baris teks buat UI, daftar top-3, latency (ms), CPU%, dan
+    // RAM (KB) buat disimpan ke histori/Evaluasi -- semua null/kosong kalau MViTv2 tidak
     // tersedia/gagal/tidak ada frame.
-    private fun runMvitComparison(frames: List<Pair<Bitmap, Int>>): Triple<String, List<RankedPrediction>, Long?> {
+    private fun runMvitComparison(frames: List<Pair<Bitmap, Int>>): MvitComparisonResult {
         return try {
             val predictor = mvitPredictor
             when {
-                predictor == null -> Triple(getString(R.string.mvit_unavailable), emptyList(), null)
-                frames.isEmpty() -> Triple(getString(R.string.mvit_no_frames), emptyList(), null)
+                predictor == null -> MvitComparisonResult(getString(R.string.mvit_unavailable), emptyList(), null, null, null)
+                frames.isEmpty() -> MvitComparisonResult(getString(R.string.mvit_no_frames), emptyList(), null, null, null)
                 else -> {
                     val orientedFrames = frames.map { (bitmap, rotationDegrees) ->
                         val oriented = OverlayRenderer.orientForDisplay(bitmap, rotationDegrees)
@@ -375,24 +392,27 @@ class CameraActivity : AppCompatActivity() {
                         }
                     }
                     val clip = ClipPreprocessor.preprocess(orientedFrames)
+                    val cpuBefore = PerformanceMetrics.snapshotCpu()
                     val start = System.nanoTime()
                     val mvitTopK = predictor.predict(clip)
                     val latencyMs = (System.nanoTime() - start) / 1_000_000
+                    val cpuPercent = PerformanceMetrics.cpuUsagePercent(cpuBefore, PerformanceMetrics.snapshotCpu())
+                    val ramKb = PerformanceMetrics.currentRamKb()
                     val (topLabelIndex, topConfidence) = mvitTopK.first()
                     val resultLine = getString(
                         R.string.comparison_row, "MViTv2", LabelMap.gloss(topLabelIndex),
                         topConfidence * 100, latencyMs, MVIT_V2_SIZE_LABEL
                     )
                     val predictions = mvitTopK.map { (idx, conf) -> RankedPrediction(LabelMap.gloss(idx), conf) }
-                    Triple(resultLine, predictions, latencyMs)
+                    MvitComparisonResult(resultLine, predictions, latencyMs, cpuPercent, ramKb)
                 }
             }
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "MViTv2 OOM saat inferensi", e)
-            Triple(getString(R.string.mvit_oom), emptyList(), null)
+            MvitComparisonResult(getString(R.string.mvit_oom), emptyList(), null, null, null)
         } catch (e: Exception) {
             Log.e(TAG, "MViTv2 gagal inferensi", e)
-            Triple(getString(R.string.mvit_error), emptyList(), null)
+            MvitComparisonResult(getString(R.string.mvit_error), emptyList(), null, null, null)
         }
     }
 

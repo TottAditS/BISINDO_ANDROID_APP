@@ -37,8 +37,16 @@
     <string name="eval_col_mvit">MViTv2</string>
     <string name="eval_mvit_na">Tidak tersedia</string>
     <string name="eval_session_frame_info">#%1$d\nFrame: %2$d mentah\n%3$d dipakai</string>
+    <string name="eval_perf_info">%1$.1f%% CPU -- %2$.1f MB RAM</string>
     <string name="eval_model_size">Ukuran model: CNNsa-BiLSTM 14.65 MB -- MViTv2 143 MB</string>
     <string name="eval_chart_title">Grafik Latensi Inferensi (ms)</string>
-    <string name="eval_detail_note">Yang dievaluasi tiap sesi: (1) breakdown top-3 prediksi tiap model (bukan cuma label teratas), (2) latency inferensi (ms), (3) jumlah frame mentah hasil deteksi MediaPipe dibanding frame yang benar-benar dipakai model setelah throttle ~15fps (target training) -- device yang jauh lebih cepat/lambat dari 15fps akan terlihat dari selisih kedua angka ini, (4) ukuran model.</string>
+    <string name="eval_detail_note">Yang dievaluasi tiap sesi: (1) breakdown top-3 prediksi tiap model (bukan cuma label teratas), (2) latency inferensi (ms), (3) jumlah frame mentah hasil deteksi MediaPipe dibanding frame yang benar-benar dipakai model setelah throttle ~15fps (target training) -- device yang jauh lebih cepat/lambat dari 15fps akan terlihat dari selisih kedua angka ini, (4) penggunaan CPU persen dan RAM (PSS, MB) tiap model saat inferensi, (5) ukuran model.</string>
     <string name="eval_accuracy_note">Confidence yang ditampilkan BUKAN akurasi -- tidak ada ground truth (jawaban benar tiap gestur) di layar ini. Akurasi resmi berasal dari evaluasi test set di desktop.</string>
+    <string name="btn_download_gif">Unduh GIF</string>
+    <string name="gif_export_progress">Membuat GIF...</string>
+    <string name="gif_export_failed">Gagal membuat GIF (sesi ini tidak punya frame tersimpan)</string>
+    <string name="gif_share_chooser_title">Bagikan GIF isyarat</string>
+    <string name="btn_download_sequence">Unduh Data Keypoint (JSON)</string>
+    <string name="sequence_export_failed">Sesi ini tidak punya data keypoint tersimpan (sesi lama, sebelum fitur ini ditambahkan)</string>
+    <string name="sequence_share_chooser_title">Bagikan data keypoint (JSON)</string>
 </resources>

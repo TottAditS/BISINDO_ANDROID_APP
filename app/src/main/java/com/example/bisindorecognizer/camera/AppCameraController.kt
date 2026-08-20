@@ -21,11 +21,15 @@ import java.util.concurrent.Executors
  * CameraController) to avoid ambiguity with androidx.camera.view.CameraController.
  *
  * Uses the BACK camera (see rencana_fix_handedness.md Opsi A) -- deliberately NOT the front/selfie
- * camera. A front camera's raw sensor feed is un-mirrored, but MediaPipe's Left/Right
- * handedness() classification assumes selfie-mirrored input; feeding it the raw front-camera
- * image produced consistently backwards Left/Right labels (confirmed bug, see PROGRESS.md). The
- * back camera never needs any mirroring at any stage -- it matches the "filmed by someone facing
- * you" convention the training dataset itself uses -- so MediaPipe's raw output is correct as-is.
+ * camera, since the front camera's raw sensor feed produced consistently backwards Left/Right
+ * `handedness()` labels vs. what MediaPipe expects.
+ *
+ * NOTE (2026-08-20): switching to the back camera turned out NOT to make MediaPipe's raw
+ * Left/Right output match the desktop training pipeline's labels either -- see the HANDEDNESS
+ * SWAP doc in HandLandmarkExtractor.buildVector126, which now applies its own correction on top
+ * of whatever this camera produces. The back camera is still the right choice here (its output is
+ * at least *consistent*, which is what made the swap detectable and fixable); this comment
+ * previously claimed its raw output was already correct, which the empirical data contradicted.
  * Trade-off: no live self-view feedback (can't see the overlay skeleton on your own hand while
  * signing) -- accepted deliberately in favor of correct predictions.
  */

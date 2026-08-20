@@ -18,6 +18,13 @@ data class RankedPrediction(val label: String, val confidence: Float)
  * CameraActivity; [capturedKeypointCount] is how many of those passed the throttle and became
  * input to KeypointSequenceBuilder. Comparing the two tells you the device's raw detection
  * throughput vs. what was actually fed to the model -- see EvaluationActivity.
+ *
+ * [cnnCpuPercent]/[cnnRamKb] and [mvitCpuPercent]/[mvitRamKb] (added to close the Ruang Lingkup
+ * commitment in Bab 1 -- "penggunaan memori... serta konsumsi CPU" -- previously never measured)
+ * are captured by [com.example.bisindorecognizer.metrics.PerformanceMetrics] right around each
+ * model's predict() call -- see that object's doc for what they mean and their limitations.
+ * MViTv2's are null under the same conditions [mvitPredictions] is empty (unavailable/failed/no
+ * frames), not just "measured as zero".
  */
 data class HistorySession(
     val id: String,
@@ -29,9 +36,16 @@ data class HistorySession(
     val frameCount: Int,
     val rawDetectionCount: Int,
     val capturedKeypointCount: Int,
+    val cnnCpuPercent: Float,
+    val cnnRamKb: Int,
+    val mvitCpuPercent: Float?,
+    val mvitRamKb: Int?,
     val dir: File
 ) {
     fun frameFile(index: Int): File = File(dir, "frame_%02d.jpg".format(index))
+
+    /** Vector 30x126 mentah yang dikirim ke CNNsa-BiLSTM sesi ini -- lihat HistoryStore.saveSession(). */
+    fun sequenceFile(): File = File(dir, "sequence.json")
 }
 
 /**

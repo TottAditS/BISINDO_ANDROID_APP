@@ -28,7 +28,12 @@ class HistoryStore(context: Context) {
         mvitLatencyMs: Long?,
         frames: List<Bitmap>,
         rawDetectionCount: Int,
-        capturedKeypointCount: Int
+        capturedKeypointCount: Int,
+        cnnCpuPercent: Float,
+        cnnRamKb: Int,
+        mvitCpuPercent: Float?,
+        mvitRamKb: Int?,
+        cnnSequence: FloatArray
     ) {
         if (frames.isEmpty() || cnnPredictions.isEmpty()) return
         val timestampMs = System.currentTimeMillis()
@@ -40,6 +45,17 @@ class HistoryStore(context: Context) {
             }
         }
 
+        // Vector 30x126 PERSIS yang dikirim ke CNNsa-BiLSTM (bukan gambar) -- disimpan buat
+        // diagnostik: bandingkan angka mentahnya langsung dengan keypoint desktop, dibanding cuma
+        // menebak dari screenshot overlay seperti sebelumnya. Format flat array + shape eksplisit
+        // (bukan array-of-array) supaya gampang di-load numpy.array(data).reshape(shape) di sisi
+        // analisis desktop.
+        val sequenceJson = JSONObject().apply {
+            put("shape", JSONArray(listOf(30, 126)))
+            put("data", JSONArray().apply { cnnSequence.forEach { put(it.toDouble()) } })
+        }
+        File(sessionDir, "sequence.json").writeText(sequenceJson.toString())
+
         val metadata = JSONObject().apply {
             put("cnnPredictions", toJsonArray(cnnPredictions))
             put("mvitPredictions", toJsonArray(mvitPredictions))
@@ -49,6 +65,10 @@ class HistoryStore(context: Context) {
             put("frameCount", frames.size)
             put("rawDetectionCount", rawDetectionCount)
             put("capturedKeypointCount", capturedKeypointCount)
+            put("cnnCpuPercent", cnnCpuPercent.toDouble())
+            put("cnnRamKb", cnnRamKb)
+            if (mvitCpuPercent != null) put("mvitCpuPercent", mvitCpuPercent.toDouble())
+            if (mvitRamKb != null) put("mvitRamKb", mvitRamKb)
         }
         File(sessionDir, "metadata.json").writeText(metadata.toString())
 
@@ -96,6 +116,10 @@ class HistoryStore(context: Context) {
                 // has() guards: sesi lama (sebelum field ini ditambah) tetap kebaca, cuma tampil 0.
                 rawDetectionCount = if (json.has("rawDetectionCount")) json.getInt("rawDetectionCount") else 0,
                 capturedKeypointCount = if (json.has("capturedKeypointCount")) json.getInt("capturedKeypointCount") else 0,
+                cnnCpuPercent = if (json.has("cnnCpuPercent")) json.getDouble("cnnCpuPercent").toFloat() else 0f,
+                cnnRamKb = if (json.has("cnnRamKb")) json.getInt("cnnRamKb") else 0,
+                mvitCpuPercent = if (json.has("mvitCpuPercent")) json.getDouble("mvitCpuPercent").toFloat() else null,
+                mvitRamKb = if (json.has("mvitRamKb")) json.getInt("mvitRamKb") else null,
                 dir = dir
             )
         } catch (e: Exception) {
