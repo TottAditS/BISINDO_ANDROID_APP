@@ -17,6 +17,9 @@ import java.io.FileOutputStream
  * Stores top-K predictions from BOTH models (not just the top-1 label) so the history detail
  * screen can show the full confidence breakdown, e.g. "90% Maaf, 8% Yakin, 2% Saya" per model.
  * Also stores per-model inference latency, used by EvaluationActivity's comparison table/chart.
+ * Additionally stores CNNsa-BiLSTM's top-1 result from EVERY sliding window tried this session
+ * (`cnnWindowResults`, see PROGRESS.md 2026-08-21 "opsi 1"), not just the winning one, so
+ * EvaluationActivity can show all of them side by side against MViTv2's single result.
  */
 class HistoryStore(context: Context) {
     private val rootDir = File(context.filesDir, "history").apply { mkdirs() }
@@ -33,7 +36,8 @@ class HistoryStore(context: Context) {
         cnnRamKb: Int,
         mvitCpuPercent: Float?,
         mvitRamKb: Int?,
-        cnnSequence: FloatArray
+        cnnSequence: FloatArray,
+        cnnWindowResults: List<RankedPrediction>
     ) {
         if (frames.isEmpty() || cnnPredictions.isEmpty()) return
         val timestampMs = System.currentTimeMillis()
@@ -69,6 +73,7 @@ class HistoryStore(context: Context) {
             put("cnnRamKb", cnnRamKb)
             if (mvitCpuPercent != null) put("mvitCpuPercent", mvitCpuPercent.toDouble())
             if (mvitRamKb != null) put("mvitRamKb", mvitRamKb)
+            put("cnnWindowResults", toJsonArray(cnnWindowResults))
         }
         File(sessionDir, "metadata.json").writeText(metadata.toString())
 
@@ -120,6 +125,7 @@ class HistoryStore(context: Context) {
                 cnnRamKb = if (json.has("cnnRamKb")) json.getInt("cnnRamKb") else 0,
                 mvitCpuPercent = if (json.has("mvitCpuPercent")) json.getDouble("mvitCpuPercent").toFloat() else null,
                 mvitRamKb = if (json.has("mvitRamKb")) json.getInt("mvitRamKb") else null,
+                cnnWindowResults = if (json.has("cnnWindowResults")) fromJsonArray(json.getJSONArray("cnnWindowResults")) else emptyList(),
                 dir = dir
             )
         } catch (e: Exception) {

@@ -6,11 +6,11 @@ import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.example.bisindorecognizer.R
 import com.example.bisindorecognizer.databinding.ActivityHistoryPlaybackBinding
-import com.example.bisindorecognizer.gif.GifExporter
 import java.util.concurrent.Executors
 
 /**
@@ -44,14 +44,17 @@ class HistoryPlaybackActivity : AppCompatActivity() {
         binding.btnClosePlayback.setOnClickListener { finish() }
 
         val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
-        val session = sessionId?.let { id -> HistoryStore(this).listSessions().find { it.id == id } }
+        val allSessions = HistoryStore(this).listSessions()
+        val session = sessionId?.let { id -> allSessions.find { it.id == id } }
 
         if (session == null) {
             binding.labelText.text = getString(R.string.history_session_missing)
-            binding.btnDownloadGif.isEnabled = false
             binding.btnDownloadSequence.isEnabled = false
             return
         }
+        // Nomor kronologis (1 = sesi pertama direkam) -- lihat sessionNumbers() -- dipakai di nama
+        // file GIF/JSON supaya sesi gampang dibedakan waktu sudah keluar dari aplikasi.
+        val sessionNumber = sessionNumbers(allSessions)[session.id]
         binding.btnDownloadSequence.isEnabled = session.sequenceFile().exists()
 
         val cnnLine = formatPredictionBreakdown(session.cnnPredictions, "CNNsa-BiLSTM")
@@ -67,42 +70,50 @@ class HistoryPlaybackActivity : AppCompatActivity() {
         }
         mainHandler.post(advanceFrame)
 
-        binding.btnDownloadGif.setOnClickListener { downloadGif(session.id) }
-        binding.btnDownloadSequence.setOnClickListener { downloadSequence(session) }
+        binding.btnDownloadSequence.setOnClickListener { downloadSequence(session, sessionNumber) }
     }
 
-    private fun downloadSequence(session: HistorySession) {
+    private fun downloadSequence(session: HistorySession, sessionNumber: Int?) {
         binding.btnDownloadSequence.isEnabled = false
+        // Hentikan flipbook sementara -- dijalankan lagi (mainHandler.post(advanceFrame)) begitu
+        // proses ini selesai, sukses maupun gagal, lihat kedua mainHandler.post{} di bawah.
+        mainHandler.removeCallbacks(advanceFrame)
         backgroundExecutor.execute {
-            val exported = SequenceExporter.export(applicationContext, session)
-            mainHandler.post {
-                binding.btnDownloadSequence.isEnabled = true
-                if (exported == null) {
-                    Toast.makeText(this, getString(R.string.sequence_export_failed), Toast.LENGTH_SHORT).show()
-                } else {
-                    val shareIntent = SequenceExporter.shareIntent(this, exported)
-                    startActivity(Intent.createChooser(shareIntent, getString(R.string.sequence_share_chooser_title)))
+            // catch (e: Throwable), BUKAN Exception -- OutOfMemoryError itu Error, bukan Exception,
+            // "catch (e: Exception)" tidak menangkapnya sama sekali. startActivity() JUGA dibungkus
+            // try/catch-nya SENDIRI di dalam mainHandler.post{} -- exception yang terjadi di situ
+            // jalan di thread lain (main thread), NANTI setelah try/catch level luar ini sudah
+            // selesai, jadi tidak akan pernah tertangkap kalau cuma dibungkus di level luar saja
+            // (fitur "Unduh GIF" yang dulu ada di sini kena masalah ini juga sebelum dihapus
+            // 2026-08-21 karena tetap crash terus-menerus di device -- lihat PROGRESS.md).
+            try {
+                val exported = SequenceExporter.export(applicationContext, session, sessionNumber)
+                mainHandler.post {
+                    binding.btnDownloadSequence.isEnabled = true
+                    mainHandler.post(advanceFrame)
+                    try {
+                        if (exported == null) {
+                            Toast.makeText(this, getString(R.string.sequence_export_failed), Toast.LENGTH_SHORT).show()
+                        } else {
+                            val shareIntent = SequenceExporter.shareIntent(this, exported)
+                            startActivity(Intent.createChooser(shareIntent, getString(R.string.sequence_share_chooser_title)))
+                        }
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Gagal membuka share chooser sequence", e)
+                        val msg = getString(R.string.sequence_export_error, e.message ?: e.toString())
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    }
                 }
-            }
-        }
-    }
-
-    private fun downloadGif(id: String) {
-        if (frames.isEmpty()) {
-            Toast.makeText(this, getString(R.string.gif_export_failed), Toast.LENGTH_SHORT).show()
-            return
-        }
-        binding.btnDownloadGif.isEnabled = false
-        Toast.makeText(this, getString(R.string.gif_export_progress), Toast.LENGTH_SHORT).show()
-        backgroundExecutor.execute {
-            val gifFile = GifExporter.export(applicationContext, id, frames)
-            mainHandler.post {
-                binding.btnDownloadGif.isEnabled = true
-                if (gifFile == null) {
-                    Toast.makeText(this, getString(R.string.gif_export_failed), Toast.LENGTH_SHORT).show()
-                } else {
-                    val shareIntent = GifExporter.shareIntent(this, gifFile)
-                    startActivity(Intent.createChooser(shareIntent, getString(R.string.gif_share_chooser_title)))
+            } catch (e: Throwable) {
+                Log.e(TAG, "Gagal ekspor sequence JSON", e)
+                mainHandler.post {
+                    binding.btnDownloadSequence.isEnabled = true
+                    mainHandler.post(advanceFrame)
+                    // Pesan beda dari sequence_export_failed (session tanpa data) -- ini kasus
+                    // exception BENERAN saat proses copy/share, jadi pesan aslinya ditampilkan
+                    // langsung di toast supaya diagnosis tidak perlu adb logcat.
+                    val msg = getString(R.string.sequence_export_error, e.message ?: e.toString())
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -117,5 +128,6 @@ class HistoryPlaybackActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_SESSION_ID = "session_id"
         private const val FRAME_INTERVAL_MS = 500L
+        private const val TAG = "HistoryPlayback"
     }
 }

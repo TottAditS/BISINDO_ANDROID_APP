@@ -24,7 +24,7 @@ class HistoryActivity : AppCompatActivity() {
 
         val sessions = HistoryStore(this).listSessions()
         binding.historyList.layoutManager = LinearLayoutManager(this)
-        binding.historyList.adapter = HistorySessionAdapter(sessions) { session ->
+        binding.historyList.adapter = HistorySessionAdapter(sessions, sessionNumbers(sessions)) { session ->
             startActivity(
                 Intent(this, HistoryPlaybackActivity::class.java)
                     .putExtra(HistoryPlaybackActivity.EXTRA_SESSION_ID, session.id)

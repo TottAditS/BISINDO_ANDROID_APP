@@ -9,8 +9,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * [sessionNumbers] memetakan id sesi ke "Sesi N" -- dihitung dari urutan KRONOLOGIS (sesi
+ * pertama direkam = 1), BUKAN urutan tampil di daftar ini (yang sengaja terbaru dulu untuk
+ * browsing cepat, lihat HistoryActivity). Angka ini harus sama persis dengan nomor "#N" yang
+ * dipakai EvaluationActivity supaya "Sesi 3" di Riwayat merujuk sesi yang sama dengan "#3" di
+ * Evaluasi -- lihat HistoryActivity.buildSessionNumbers().
+ */
 class HistorySessionAdapter(
     private val sessions: List<HistorySession>,
+    private val sessionNumbers: Map<String, Int>,
     private val onClick: (HistorySession) -> Unit
 ) : RecyclerView.Adapter<HistorySessionAdapter.ViewHolder>() {
 
@@ -30,7 +38,9 @@ class HistorySessionAdapter(
             holder.binding.thumbnail.setImageBitmap(BitmapFactory.decodeFile(thumbFile.path))
         }
         val topCnn = session.cnnPredictions.firstOrNull()
-        holder.binding.labelText.text = topCnn?.label ?: "?"
+        val sessionNumber = sessionNumbers[session.id]
+        val sessionLabel = if (sessionNumber != null) "Sesi $sessionNumber" else "Sesi ?"
+        holder.binding.labelText.text = "$sessionLabel: ${topCnn?.label ?: "?"}"
         val confidenceText = topCnn?.let { "%.1f".format(it.confidence * 100) } ?: "?"
         holder.binding.detailText.text = "$confidenceText% -- ${dateFormat.format(Date(session.timestampMs))}"
         holder.itemView.setOnClickListener { onClick(session) }

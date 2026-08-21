@@ -25,6 +25,12 @@ data class RankedPrediction(val label: String, val confidence: Float)
  * model's predict() call -- see that object's doc for what they mean and their limitations.
  * MViTv2's are null under the same conditions [mvitPredictions] is empty (unavailable/failed/no
  * frames), not just "measured as zero".
+ *
+ * [cnnWindowResults] holds the top-1 result of EVERY sliding window tried by
+ * [com.example.bisindorecognizer.keypoints.KeypointSequenceBuilder.alignToSlidingWindows] (10 by
+ * default, see PROGRESS.md 2026-08-21 "opsi 1"), in window order -- NOT just the winning one that
+ * [cnnPredictions] represents. Empty for sessions saved before this field existed. [cnnLatencyMs]
+ * for those sessions is the TOTAL time across all windows tried, not one inference.
  */
 data class HistorySession(
     val id: String,
@@ -40,12 +46,26 @@ data class HistorySession(
     val cnnRamKb: Int,
     val mvitCpuPercent: Float?,
     val mvitRamKb: Int?,
+    val cnnWindowResults: List<RankedPrediction>,
     val dir: File
 ) {
     fun frameFile(index: Int): File = File(dir, "frame_%02d.jpg".format(index))
 
     /** Vector 30x126 mentah yang dikirim ke CNNsa-BiLSTM sesi ini -- lihat HistoryStore.saveSession(). */
     fun sequenceFile(): File = File(dir, "sequence.json")
+}
+
+/**
+ * Memetakan tiap sesi ke nomor urut KRONOLOGIS (sesi paling awal direkam = 1), terlepas dari
+ * urutan [sessions] yang diberikan. Dipakai bersama oleh HistoryActivity (daftar Riwayat, sengaja
+ * ditampilkan terbaru dulu untuk browsing cepat) dan EvaluationActivity (tabel, sengaja terlama
+ * dulu) supaya "Sesi 3" selalu merujuk sesi yang sama persis di kedua layar itu, walau urutan
+ * tampilnya beda.
+ */
+fun sessionNumbers(sessions: List<HistorySession>): Map<String, Int> {
+    return sessions.sortedBy { it.timestampMs }
+        .mapIndexed { index, session -> session.id to index + 1 }
+        .toMap()
 }
 
 /**

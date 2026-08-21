@@ -21,31 +21,15 @@
         android:text="@string/btn_close_history"
         android:textColor="#FFFFFF" />
 
-    <LinearLayout
+    <Button
+        android:id="@+id/btnDownloadSequence"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|start"
         android:layout_margin="16dp"
-        android:orientation="vertical">
-
-        <Button
-            android:id="@+id/btnDownloadGif"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:backgroundTint="#AA000000"
-            android:text="@string/btn_download_gif"
-            android:textColor="#FFFFFF" />
-
-        <Button
-            android:id="@+id/btnDownloadSequence"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:backgroundTint="#AA000000"
-            android:text="@string/btn_download_sequence"
-            android:textColor="#FFFFFF" />
-
-    </LinearLayout>
+        android:backgroundTint="#AA000000"
+        android:text="@string/btn_download_sequence"
+        android:textColor="#FFFFFF" />
 
     <TextView
         android:id="@+id/labelText"

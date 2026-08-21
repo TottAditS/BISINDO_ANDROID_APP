@@ -2,7 +2,8 @@
 # Checklist alat yang harus terpasang di mesin sebelum scaffold/build project ini.
 # Bukan pip requirements (project ini Kotlin/Android, bukan Python) -- tetap dinamai .txt
 # supaya jadi checklist plain-text yang gampang dicentang manual.
-# Status mesin saat ini (dicek 2026-07-31): SEMUA item di bawah BELUM terpasang.
+# Status mesin saat ini (dicek 2026-08-21): semua item di bawah terpasang & terpakai --
+# app sudah selesai dan tervalidasi di device fisik, lihat README.md.
 
 [x] JDK 17
     - Package: Eclipse Temurin JDK 17 (EclipseAdoptium.Temurin.17.JDK), versi 17.0.20.8
@@ -37,10 +38,14 @@
 
 [x] SDK components (via sdkmanager, setelah cmdline-tools terpasang)
     - sdkmanager --licenses   (terima semua) -> diganti workaround manual, lihat catatan di atas
-    - sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+    - sdkmanager "platform-tools" "platforms;android-35" "platforms;android-36" \
+        "build-tools;35.0.0" "build-tools;36.0.0"
     - Verifikasi: adb --version; ls <sdk_root>\platforms; ls <sdk_root>\build-tools
-    - Hasil verifikasi: adb 1.0.41 (platform-tools 37.0.1), platforms\android-35 ada,
-      build-tools\35.0.0 ada.
+    - Hasil verifikasi: adb 1.0.41 (platform-tools 37.0.1), platforms\android-35 & android-36 ada,
+      build-tools\35.0.0 & 36.0.0 ada.
+    - Catatan: android-36/build-tools 36.0.0 ditambahkan belakangan -- androidx.camera:*:1.6.1
+      mensyaratkan compileSdk >= 36 (lihat README.md bagian Toolchain), draft awal cuma pasang
+      android-35.
 
 # --- Tidak perlu install manual terpisah (otomatis ter-resolve oleh Gradle saat build) ---
 # AGP 8.13.0            -> dideklarasikan di root build.gradle.kts, didownload Gradle saat build
@@ -54,4 +59,7 @@
 [x] VSCode extension: XML (redhat.vscode-xml)
 
 # --- Device testing (bukan software di mesin dev) ---
-[ ] Poco M4 Pro: Developer Options + USB debugging aktif, RSA key di-authorize saat adb connect
+[x] Poco M4 Pro: Developer Options + USB debugging aktif, RSA key di-authorize saat adb connect --
+    dipakai berulang kali untuk adb install/logcat selama debugging fitur (lihat PROGRESS.md);
+    beberapa sesi uji sebelumnya sempat pakai sideload manual (tanpa adb) saat USB debugging
+    belum disambungkan, lihat README.md.

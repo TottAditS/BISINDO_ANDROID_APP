@@ -77,7 +77,12 @@ class EvaluationActivity : AppCompatActivity() {
                 val perf = getString(
                     R.string.eval_perf_info, session.cnnCpuPercent, session.cnnRamKb / 1024f
                 )
-                "${formatPredictionBreakdown(session.cnnPredictions)}\n${session.cnnLatencyMs} ms\n$perf"
+                val windowsText = if (session.cnnWindowResults.isNotEmpty()) {
+                    formatWindowResults(session.cnnWindowResults)
+                } else {
+                    formatPredictionBreakdown(session.cnnPredictions) // sesi lama, sebelum sliding window ada
+                }
+                "$windowsText\n${session.cnnLatencyMs} ms total\n$perf"
             } else {
                 "-"
             }
@@ -93,6 +98,21 @@ class EvaluationActivity : AppCompatActivity() {
             }
             addTableRow(sessionText, cnnText, mvitText, header = false)
         }
+    }
+
+    // "1: 76.2% Siapa\n2: 78.8% Teman\n...\n10: 99.0% Air (dipilih)" -- satu baris per jendela
+    // geser (lihat KeypointSequenceBuilder.alignToSlidingWindows), bukan cuma yang menang, supaya
+    // kelihatan sebaran hasil tiap posisi jendela seperti diminta ("cnn1 cnn2 ... cnn10 confiden").
+    // Jendela dengan confidence tertinggi ditandai "(dipilih)" -- itu yang jadi jawaban akhir
+    // aplikasi (session.cnnPredictions). Sesi lama sebelum fitur ini ada (cnnWindowResults kosong)
+    // fallback ke breakdown top-3 satu jendela seperti sebelumnya.
+    private fun formatWindowResults(windowResults: List<RankedPrediction>): String {
+        if (windowResults.isEmpty()) return "-"
+        val bestIndex = windowResults.indices.maxBy { windowResults[it].confidence }
+        return windowResults.mapIndexed { index, prediction ->
+            val line = "${index + 1}: ${"%.1f".format(prediction.confidence * 100)}% ${prediction.label}"
+            if (index == bestIndex) "$line (dipilih)" else line
+        }.joinToString("\n")
     }
 
     private fun addTableRow(col1: String, col2: String, col3: String, header: Boolean) {

@@ -234,11 +234,14 @@ class CameraActivity : AppCompatActivity() {
         synchronized(mvitRawFrames) { mvitRawFrames.clear() }
         recordingStartElapsedMs = SystemClock.elapsedRealtime()
 
-        // Overlay live dimatikan SELAMA sesi rekam (dikembalikan begitu selesai lewat
-        // finishRecordingAndPredict) -- menghemat kerja main thread/render tiap frame supaya
-        // MediaPipe dapat porsi CPU lebih besar untuk deteksi, bukan berbagi dengan Canvas redraw
-        // terus-menerus. Overlay di Riwayat (OverlayRenderer.renderComposite, dipanggil terpisah
-        // di bawah) TIDAK terpengaruh -- itu jalur kode lain yang tetap jalan seperti biasa.
+        // Overlay live TETAP tampil selama rekam (lihat onDetectionResult() -- sempat dimatikan
+        // demi hemat CPU/throughput, tapi diaktifkan lagi 2026-08-21 atas permintaan: pengguna
+        // butuh feedback visual real-time supaya bisa meragakan gestur lebih presisi mengikuti
+        // titik-titik yang benar-benar terdeteksi, bukan menebak buta. Sliding-window (opsi 1,
+        // lihat KeypointSequenceBuilder.alignToSlidingWindows) membuat pipeline lebih toleran
+        // terhadap throughput yang sedikit turun akibat ini, jadi trade-off-nya dianggap sepadan.
+        // Kalau nanti device tertentu jadi choppy lagi, opsi paling gampang: matikan lagi baris
+        // update() di onDetectionResult() untuk device itu, tanpa perlu ubah bagian lain.
         binding.handOverlay.clear()
 
         binding.btnRecord.isEnabled = false
@@ -253,14 +256,12 @@ class CameraActivity : AppCompatActivity() {
     // atau thread executor CameraX). HARUS tetap murah -- lihat catatan mvitRawFrames di atas
     // soal kenapa kerja berat (rotate/resize bitmap) tidak boleh terjadi di sini.
     private fun onDetectionResult(bitmap: Bitmap, vector: FloatArray, overlay: HandOverlayData) {
-        // Overlay live cuma diupdate DI LUAR sesi rekam (browsing biasa) -- selama merekam,
-        // digambar sekali sebagai blank oleh startRecording() dan dibiarkan begitu, supaya
-        // main thread tidak sibuk redraw Canvas tiap frame (lihat catatan di startRecording()).
-        // Guide box statis di layout tetap kasih bantuan framing selama rekam berlangsung.
-        if (!isRecording.get()) {
-            mainHandler.post { binding.handOverlay.update(overlay) }
-            return
-        }
+        // Overlay live sekarang diupdate SELALU, termasuk selama merekam (sempat dimatikan waktu
+        // rekam demi hemat CPU -- lihat catatan di startRecording() kenapa dinyalakan lagi
+        // 2026-08-21) -- supaya pengguna bisa lihat titik/rangka tangannya sendiri secara
+        // real-time saat meragakan gestur, bukan cuma guide box statis.
+        mainHandler.post { binding.handOverlay.update(overlay) }
+        if (!isRecording.get()) return
         rawDetectionCount.incrementAndGet()
 
         val elapsed = SystemClock.elapsedRealtime() - recordingStartElapsedMs
@@ -319,19 +320,34 @@ class CameraActivity : AppCompatActivity() {
                 return@execute
             }
 
-            val cnnSequence = KeypointSequenceBuilder.alignToSequenceLength(keypointFrames)
+            // Opsi 1 "sliding window" (lihat PROGRESS.md 2026-08-21 dan doc KeypointSequenceBuilder):
+            // coba beberapa jendela 30-frame yang tersebar di seluruh rekaman, bukan cuma satu
+            // tebakan di tengah -- jendela dengan confidence top-1 tertinggi yang dipakai sebagai
+            // jawaban akhir. CNNsa-BiLSTM cukup cepat (~7ms/panggilan di desktop) sehingga
+            // menjalankannya DEFAULT_WINDOW_COUNT (10) kali tetap jauh di bawah ambang real-time.
+            val cnnWindows = KeypointSequenceBuilder.alignToSlidingWindows(keypointFrames)
             val cnnCpuBefore = PerformanceMetrics.snapshotCpu()
             val cnnStart = System.nanoTime()
-            val cnnTopK = onnxPredictor.predict(cnnSequence)
+            val cnnWindowTopK = cnnWindows.map { window -> onnxPredictor.predict(window) }
             val cnnLatencyMs = (System.nanoTime() - cnnStart) / 1_000_000
             val cnnCpuPercent = PerformanceMetrics.cpuUsagePercent(cnnCpuBefore, PerformanceMetrics.snapshotCpu())
             val cnnRamKb = PerformanceMetrics.currentRamKb()
+
+            val bestWindowIndex = cnnWindowTopK.indices.maxBy { cnnWindowTopK[it].first().second }
+            val cnnSequence = cnnWindows[bestWindowIndex]
+            val cnnTopK = cnnWindowTopK[bestWindowIndex]
             val (topLabelIndex, topConfidence) = cnnTopK.first()
             val cnnResultLine = getString(
                 R.string.comparison_row, "CNNsa-BiLSTM", LabelMap.gloss(topLabelIndex), topConfidence * 100,
                 cnnLatencyMs, CNNSA_BILSTM_SIZE_LABEL
             )
             val cnnPredictions = cnnTopK.map { (idx, conf) -> RankedPrediction(LabelMap.gloss(idx), conf) }
+            // Top-1 SETIAP jendela (bukan cuma yang menang) -- disimpan buat tabel Evaluasi supaya
+            // bisa dibandingkan satu-satu, sesuai permintaan: sesi X | cnn1..cnn10 confidence | ...
+            val cnnWindowResults = cnnWindowTopK.map { topK ->
+                val (idx, conf) = topK.first()
+                RankedPrediction(LabelMap.gloss(idx), conf)
+            }
 
             mainHandler.post {
                 binding.predictionText.text = "$cnnResultLine\n${getString(R.string.mvit_processing)}"
@@ -347,7 +363,7 @@ class CameraActivity : AppCompatActivity() {
                     cnnPredictions, mvitPredictions, cnnLatencyMs, mvitLatencyMs, historyFrames,
                     rawFrameCount, keypointFrames.size,
                     cnnCpuPercent, cnnRamKb, mvitCpuPercent, mvitRamKb,
-                    cnnSequence
+                    cnnSequence, cnnWindowResults
                 )
             }
 
