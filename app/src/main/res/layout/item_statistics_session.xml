@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#F2F2F0"
+    android:layout_marginBottom="10dp"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/headerText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#0B0B0B"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/frameInfoText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textColor="#898781"
+        android:textSize="12sp" />
+
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="8dp" android:background="#DCDAD3"/>
+
+    <TextView
+        android:id="@+id/cnnResultText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#2a78d6"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/cnnPerfText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#52514E"
+        android:textSize="12sp" />
+
+    <ToggleButton
+        android:id="@+id/cnnCorrectToggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textOn="@string/stat_correct"
+        android:textOff="@string/stat_incorrect"
+        android:text="@string/stat_correct" />
+
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="8dp" android:background="#DCDAD3"/>
+
+    <TextView
+        android:id="@+id/mvitResultText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#eb6834"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/mvitPerfText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#52514E"
+        android:textSize="12sp" />
+
+    <ToggleButton
+        android:id="@+id/mvitCorrectToggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textOn="@string/stat_correct"
+        android:textOff="@string/stat_incorrect"
+        android:text="@string/stat_correct" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button android:id="@+id/btnLihat" style="?android:attr/buttonStyleSmall"
+            android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:text="@string/stat_btn_lihat" android:textSize="11sp"/>
+        <Button android:id="@+id/btnUnduhJson" style="?android:attr/buttonStyleSmall"
+            android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:text="@string/stat_btn_json" android:textSize="11sp"/>
+        <Button android:id="@+id/btnHapus" style="?android:attr/buttonStyleSmall"
+            android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:text="@string/stat_btn_hapus" android:textSize="11sp" android:textColor="#C62828"/>
+    </LinearLayout>
+
+</LinearLayout>

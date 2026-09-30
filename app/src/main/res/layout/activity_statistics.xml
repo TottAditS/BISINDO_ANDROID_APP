@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FCFCFB">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="16dp"
+        android:background="@color/ic_launcher_background">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/statistik_title"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnCloseStatistics"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:backgroundTint="#AA000000"
+            android:text="@string/btn_close_history"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/emptyText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:gravity="center"
+        android:text="@string/eval_empty"
+        android:textColor="#757575"
+        android:visibility="gone" />
+
+    <ScrollView
+        android:id="@+id/contentGroup"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/statisticsList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:nestedScrollingEnabled="false" />
+
+            <!-- Kontrol paginasi -->
+            <TextView
+                android:id="@+id/resultCountText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="#52514E"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/stat_show"
+                    android:textSize="13sp" />
+
+                <Spinner
+                    android:id="@+id/pageSizeSpinner"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp" />
+
+                <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
+
+                <Button android:id="@+id/btnFirst" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/stat_first" android:textSize="11sp"/>
+                <Button android:id="@+id/btnPrev" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/stat_prev" android:textSize="11sp"/>
+                <TextView
+                    android:id="@+id/pageIndicatorText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="6dp"
+                    android:textSize="13sp" />
+                <Button android:id="@+id/btnNext" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/stat_next" android:textSize="11sp"/>
+                <Button android:id="@+id/btnLast" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/stat_last" android:textSize="11sp"/>
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnDownloadAllStats"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/stat_btn_download_all" />
+
+            <!-- Chart agregat per kelas -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="@string/stat_chart_latency"
+                android:textColor="#0B0B0B"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <com.example.bisindorecognizer.history.GroupedBarChartView
+                android:id="@+id/latencyChart"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/stat_chart_cpu"
+                android:textColor="#0B0B0B"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <com.example.bisindorecognizer.history.GroupedBarChartView
+                android:id="@+id/cpuChart"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/stat_chart_ram"
+                android:textColor="#0B0B0B"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <com.example.bisindorecognizer.history.GroupedBarChartView
+                android:id="@+id/ramChart"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/stat_chart_accuracy"
+                android:textColor="#0B0B0B"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <Button
+                android:id="@+id/btnCalculate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/stat_btn_calculate" />
+            <com.example.bisindorecognizer.history.GroupedBarChartView
+                android:id="@+id/accuracyChart"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:layout_marginBottom="24dp"
+                android:text="@string/eval_accuracy_note"
+                android:textColor="#898781"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</LinearLayout>

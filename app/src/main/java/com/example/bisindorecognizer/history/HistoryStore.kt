@@ -8,18 +8,8 @@ import java.io.File
 import java.io.FileOutputStream
 
 /**
- * Persists a small "flipbook" of overlay-baked JPEG frames per successful (non-timed-out)
- * recording, to app-private internal storage (context.filesDir/history/) -- not MediaStore or
- * a public gallery folder, since this is app-internal review/debug data, not user media, and
- * app-private storage needs no runtime permission. Keeps only the [MAX_SESSIONS] most recent
- * sessions; older ones are deleted automatically after each save.
- *
- * Stores top-K predictions from BOTH models (not just the top-1 label) so the history detail
- * screen can show the full confidence breakdown, e.g. "90% Maaf, 8% Yakin, 2% Saya" per model.
- * Also stores per-model inference latency, used by EvaluationActivity's comparison table/chart.
- * Additionally stores CNNsa-BiLSTM's top-1 result from EVERY sliding window tried this session
- * (`cnnWindowResults`, see PROGRESS.md 2026-08-21 "opsi 1"), not just the winning one, so
- * EvaluationActivity can show all of them side by side against MViTv2's single result.
+ * Persists one JSON+JPEG folder per recording under context.filesDir/history/ (app-private, no
+ * permission needed). Keeps only the [MAX_SESSIONS] most recent; older ones auto-pruned.
  */
 class HistoryStore(context: Context) {
     private val rootDir = File(context.filesDir, "history").apply { mkdirs() }
@@ -37,7 +27,8 @@ class HistoryStore(context: Context) {
         mvitCpuPercent: Float?,
         mvitRamKb: Int?,
         cnnSequence: FloatArray,
-        cnnWindowResults: List<RankedPrediction>
+        cnnWindowResults: List<RankedPrediction>,
+        targetClass: String
     ) {
         if (frames.isEmpty() || cnnPredictions.isEmpty()) return
         val timestampMs = System.currentTimeMillis()
@@ -49,11 +40,8 @@ class HistoryStore(context: Context) {
             }
         }
 
-        // Vector 30x126 PERSIS yang dikirim ke CNNsa-BiLSTM (bukan gambar) -- disimpan buat
-        // diagnostik: bandingkan angka mentahnya langsung dengan keypoint desktop, dibanding cuma
-        // menebak dari screenshot overlay seperti sebelumnya. Format flat array + shape eksplisit
-        // (bukan array-of-array) supaya gampang di-load numpy.array(data).reshape(shape) di sisi
-        // analisis desktop.
+        // Flat array + shape eksplisit (bukan array-of-array) supaya gampang di-load
+        // numpy.array(data).reshape(shape) di sisi analisis desktop.
         val sequenceJson = JSONObject().apply {
             put("shape", JSONArray(listOf(30, 126)))
             put("data", JSONArray().apply { cnnSequence.forEach { put(it.toDouble()) } })
@@ -74,10 +62,38 @@ class HistoryStore(context: Context) {
             if (mvitCpuPercent != null) put("mvitCpuPercent", mvitCpuPercent.toDouble())
             if (mvitRamKb != null) put("mvitRamKb", mvitRamKb)
             put("cnnWindowResults", toJsonArray(cnnWindowResults))
+            put("targetClass", targetClass)
         }
         File(sessionDir, "metadata.json").writeText(metadata.toString())
 
         pruneOldSessions()
+    }
+
+    /** Timpa toggle correctness manual (null = kembali ke auto-compute dari targetClass).
+     * CNN dan MViT2 masing-masing punya method sendiri (bukan 1 method 2 parameter) supaya tiap
+     * toggle baca-tulis field-nya sendiri langsung dari disk, tidak bergantung nilai sibling dari
+     * objek HistorySession di memori (yang bisa stale kalau toggle lain ditekan sebelum reload()
+     * berikutnya -- dulu ini menyebabkan toggle kedua menimpa balik toggle pertama). No-op kalau
+     * sessionId tidak ditemukan. */
+    fun updateCnnCorrectness(sessionId: String, cnnCorrect: Boolean?) {
+        val metaFile = File(File(rootDir, sessionId), "metadata.json")
+        if (!metaFile.exists()) return
+        val json = JSONObject(metaFile.readText())
+        if (cnnCorrect != null) json.put("cnnCorrectOverride", cnnCorrect) else json.remove("cnnCorrectOverride")
+        metaFile.writeText(json.toString())
+    }
+
+    fun updateMvitCorrectness(sessionId: String, mvitCorrect: Boolean?) {
+        val metaFile = File(File(rootDir, sessionId), "metadata.json")
+        if (!metaFile.exists()) return
+        val json = JSONObject(metaFile.readText())
+        if (mvitCorrect != null) json.put("mvitCorrectOverride", mvitCorrect) else json.remove("mvitCorrectOverride")
+        metaFile.writeText(json.toString())
+    }
+
+    /** Hapus 1 attempt tertentu (beda dari pruneOldSessions() yang otomatis dari sesi terlama). */
+    fun deleteSession(sessionId: String) {
+        File(rootDir, sessionId).deleteRecursively()
     }
 
     private fun toJsonArray(predictions: List<RankedPrediction>): JSONArray {
@@ -103,8 +119,7 @@ class HistoryStore(context: Context) {
         return dirs.mapNotNull(::readMetadata).sortedByDescending { it.timestampMs }
     }
 
-    // Tolerate a missing/corrupt metadata.json (e.g. process killed mid-write) by skipping that
-    // session instead of crashing the whole history list.
+    // Toleransi metadata.json hilang/rusak -- skip sesi itu, bukan crash seluruh daftar.
     private fun readMetadata(dir: File): HistorySession? {
         val metaFile = File(dir, "metadata.json")
         if (!metaFile.exists()) return null
@@ -126,6 +141,9 @@ class HistoryStore(context: Context) {
                 mvitCpuPercent = if (json.has("mvitCpuPercent")) json.getDouble("mvitCpuPercent").toFloat() else null,
                 mvitRamKb = if (json.has("mvitRamKb")) json.getInt("mvitRamKb") else null,
                 cnnWindowResults = if (json.has("cnnWindowResults")) fromJsonArray(json.getJSONArray("cnnWindowResults")) else emptyList(),
+                targetClass = if (json.has("targetClass")) json.getString("targetClass") else null,
+                cnnCorrectOverride = if (json.has("cnnCorrectOverride")) json.getBoolean("cnnCorrectOverride") else null,
+                mvitCorrectOverride = if (json.has("mvitCorrectOverride")) json.getBoolean("mvitCorrectOverride") else null,
                 dir = dir
             )
         } catch (e: Exception) {
@@ -138,6 +156,6 @@ class HistoryStore(context: Context) {
     }
 
     companion object {
-        private const val MAX_SESSIONS = 5
+        private const val MAX_SESSIONS = 200
     }
 }

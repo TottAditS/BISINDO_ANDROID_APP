@@ -14,7 +14,7 @@
     <string name="recording_processing">Memproses hasil...</string>
     <string name="recording_no_hand">Tangan tidak cukup lama terdeteksi selama rekaman, coba lagi</string>
     <string name="guide_box_hint">Posisikan tangan di sini</string>
-    <string name="btn_history">Riwayat</string>
+    <string name="btn_history">Statistik</string>
     <string name="history_title">Riwayat Prediksi</string>
     <string name="btn_close_history">Tutup</string>
     <string name="history_empty">Belum ada riwayat prediksi. Rekam gerakan dulu di layar Kamera.</string>
@@ -41,7 +41,25 @@
     <string name="eval_model_size">Ukuran model: CNNsa-BiLSTM 14.65 MB -- MViTv2 143 MB</string>
     <string name="eval_chart_title">Grafik Latensi Inferensi (ms)</string>
     <string name="eval_detail_note">Yang dievaluasi tiap sesi: (1) CNNsa-BiLSTM dijalankan pada 10 jendela geser sepanjang rekaman, breakdown confidence tiap jendela ditampilkan satu per satu dan yang tertinggi ditandai "(dipilih)" sebagai jawaban akhir, sedangkan MViTv2 tetap breakdown top-3 satu hasil, (2) latency inferensi total (ms), (3) jumlah frame mentah hasil deteksi MediaPipe dibanding frame yang benar-benar dipakai model setelah throttle ~15fps (target training) -- device yang jauh lebih cepat/lambat dari 15fps akan terlihat dari selisih kedua angka ini, (4) penggunaan CPU persen dan RAM (PSS, MB) tiap model saat inferensi, (5) ukuran model.</string>
-    <string name="eval_accuracy_note">Confidence yang ditampilkan BUKAN akurasi -- tidak ada ground truth (jawaban benar tiap gestur) di layar ini. Akurasi resmi berasal dari evaluasi test set di desktop.</string>
+    <string name="eval_accuracy_note">Toggle Benar/Salah tiap attempt otomatis dihitung dari kelas target yang dipilih sebelum rekam (bisa ditimpa manual). Tekan "Hitung" untuk merangkum jadi grafik akurasi per kelas.</string>
+
+    <string name="statistik_title">Statistik</string>
+    <string name="stat_correct">Benar</string>
+    <string name="stat_incorrect">Salah</string>
+    <string name="stat_btn_lihat">Lihat</string>
+    <string name="stat_btn_json">Unduh JSON</string>
+    <string name="stat_btn_hapus">Hapus</string>
+    <string name="stat_show">Show:</string>
+    <string name="stat_first">&#171;First</string>
+    <string name="stat_prev">&#8249;Prev</string>
+    <string name="stat_next">Next&#8250;</string>
+    <string name="stat_last">Last&#187;</string>
+    <string name="stat_btn_download_all">Unduh Semua Statistik (CSV)</string>
+    <string name="stat_chart_latency">Grafik Latensi per Kelas (ms)</string>
+    <string name="stat_chart_cpu">Grafik CPU Usage per Kelas (%)</string>
+    <string name="stat_chart_ram">Grafik RAM per Kelas (MB)</string>
+    <string name="stat_chart_accuracy">Grafik Akurasi per Kelas (%)</string>
+    <string name="stat_btn_calculate">Hitung</string>
     <string name="btn_download_sequence">Unduh Data Keypoint (JSON)</string>
     <string name="sequence_export_failed">Sesi ini tidak punya data keypoint tersimpan (sesi lama, sebelum fitur ini ditambahkan)</string>
     <string name="sequence_export_error">Gagal mengekspor data keypoint: %1$s</string>

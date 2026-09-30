@@ -73,6 +73,8 @@ class CameraActivity : AppCompatActivity() {
     // hasil keypoint di thread internal MediaPipe) makanya AtomicBoolean.
     private val isRecording = AtomicBoolean(false)
     private var recordingStartElapsedMs = 0L
+    private var recordingTargetClass = ""
+    private var selectedTargetClass = LabelMap.gloss(0)
 
     // SEMUA (elapsed sejak recordingStartElapsedMs, vector keypoint) yang DITERIMA MediaPipe
     // selama sesi rekam, TAPI cuma yang lolos throttle ~15fps (lihat nextCaptureFrameElapsedMs)
@@ -175,6 +177,24 @@ class CameraActivity : AppCompatActivity() {
             }
         )
 
+        // Button + AlertDialog, BUKAN Spinner -- Spinner platform sempat kelihatan teks putih
+        // hilang lagi begitu 1 item dipilih (closed-state-nya doang, popup-nya sendiri sudah
+        // benar) di device tertentu, kemungkinan quirk styling Spinner bawaan OEM yang berat
+        // dilawan dari kode app. Button+dialog pakai widget yang sudah terbukti render benar di
+        // layar sama ini (btnRecord/btnCloseCamera), dan dialog center-screen otomatis tidak
+        // akan pernah nabrak baris tombol atas seperti popup Spinner yang nempel di bawahnya.
+        binding.btnTargetClass.text = selectedTargetClass
+        binding.btnTargetClass.setOnClickListener {
+            val glosses = LabelMap.all().toTypedArray()
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Pilih kelas target")
+                .setItems(glosses) { _, which ->
+                    selectedTargetClass = glosses[which]
+                    binding.btnTargetClass.text = selectedTargetClass
+                }
+                .show()
+        }
+
         binding.btnCloseCamera.setOnClickListener { finish() }
         binding.btnRecord.setOnClickListener { startRecording() }
 
@@ -233,6 +253,7 @@ class CameraActivity : AppCompatActivity() {
         }
         synchronized(mvitRawFrames) { mvitRawFrames.clear() }
         recordingStartElapsedMs = SystemClock.elapsedRealtime()
+        recordingTargetClass = selectedTargetClass
 
         // Overlay live TETAP tampil selama rekam (lihat onDetectionResult() -- sempat dimatikan
         // demi hemat CPU/throughput, tapi diaktifkan lagi 2026-08-21 atas permintaan: pengguna
@@ -363,7 +384,7 @@ class CameraActivity : AppCompatActivity() {
                     cnnPredictions, mvitPredictions, cnnLatencyMs, mvitLatencyMs, historyFrames,
                     rawFrameCount, keypointFrames.size,
                     cnnCpuPercent, cnnRamKb, mvitCpuPercent, mvitRamKb,
-                    cnnSequence, cnnWindowResults
+                    cnnSequence, cnnWindowResults, recordingTargetClass
                 )
             }
 

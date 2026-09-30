@@ -4,7 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import com.example.bisindorecognizer.databinding.ActivityMainBinding
-import com.example.bisindorecognizer.history.HistoryActivity
+import com.example.bisindorecognizer.history.StatisticsActivity
 
 /** Menu screen: launcher activity, tidak menyentuh kamera sama sekali. */
 class MainActivity : AppCompatActivity() {
@@ -21,7 +21,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnHistory.setOnClickListener {
-            startActivity(Intent(this, HistoryActivity::class.java))
+            startActivity(Intent(this, StatisticsActivity::class.java))
         }
 
         // finishAndRemoveTask() menghapus task dari recent apps (bukan cuma finish() biasa yang

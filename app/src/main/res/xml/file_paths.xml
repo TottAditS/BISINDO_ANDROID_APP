@@ -4,4 +4,5 @@
          files/history/ asli, supaya FileProvider cuma meng-grant file JSON ini, bukan seluruh
          folder Riwayat (yang juga berisi frame JPEG sesi lain). -->
     <cache-path name="sequence_exports" path="sequence_exports/"/>
+    <cache-path name="stats_exports" path="stats_exports/"/>
 </paths>

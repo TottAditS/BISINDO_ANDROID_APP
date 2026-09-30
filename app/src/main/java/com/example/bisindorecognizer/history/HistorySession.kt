@@ -47,12 +47,22 @@ data class HistorySession(
     val mvitCpuPercent: Float?,
     val mvitRamKb: Int?,
     val cnnWindowResults: List<RankedPrediction>,
+    val targetClass: String?,
+    val cnnCorrectOverride: Boolean?,
+    val mvitCorrectOverride: Boolean?,
     val dir: File
 ) {
     fun frameFile(index: Int): File = File(dir, "frame_%02d.jpg".format(index))
 
     /** Vector 30x126 mentah yang dikirim ke CNNsa-BiLSTM sesi ini -- lihat HistoryStore.saveSession(). */
     fun sequenceFile(): File = File(dir, "sequence.json")
+
+    /** Null kalau belum ada targetClass (sesi lama) dan belum di-override manual. */
+    fun cnnCorrect(): Boolean? =
+        cnnCorrectOverride ?: targetClass?.let { it == cnnPredictions.firstOrNull()?.label }
+
+    fun mvitCorrect(): Boolean? =
+        mvitCorrectOverride ?: targetClass?.let { it == mvitPredictions.firstOrNull()?.label }
 }
 
 /**
@@ -65,6 +75,17 @@ data class HistorySession(
 fun sessionNumbers(sessions: List<HistorySession>): Map<String, Int> {
     return sessions.sortedBy { it.timestampMs }
         .mapIndexed { index, session -> session.id to index + 1 }
+        .toMap()
+}
+
+/** "Percobaan ke-N" per targetClass (1 = pertama direkam untuk kelas itu), kronologis. Sesi
+ * tanpa targetClass tidak masuk map ini. */
+fun attemptNumbers(sessions: List<HistorySession>): Map<String, Int> {
+    return sessions.filter { it.targetClass != null }
+        .groupBy { it.targetClass }
+        .flatMap { (_, group) ->
+            group.sortedBy { it.timestampMs }.mapIndexed { index, session -> session.id to index + 1 }
+        }
         .toMap()
 }
 

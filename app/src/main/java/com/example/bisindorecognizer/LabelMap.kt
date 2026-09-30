@@ -14,4 +14,6 @@ object LabelMap {
     )
 
     fun gloss(index: Int): String = glosses.getOrElse(index) { "label_$index" }
+
+    fun all(): List<String> = glosses.toList()
 }

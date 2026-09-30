@@ -28,17 +28,12 @@
             android:screenOrientation="portrait"/>
 
         <activity
-            android:name=".history.HistoryActivity"
+            android:name=".history.StatisticsActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>
 
         <activity
             android:name=".history.HistoryPlaybackActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"/>
-
-        <activity
-            android:name=".history.EvaluationActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>
 

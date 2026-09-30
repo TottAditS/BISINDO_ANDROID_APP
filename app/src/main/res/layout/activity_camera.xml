@@ -48,6 +48,16 @@
         android:textColor="#FFFFFF" />
 
     <Button
+        android:id="@+id/btnTargetClass"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="72dp"
+        android:backgroundTint="#AA000000"
+        android:textColor="#FFFFFF"
+        android:textAllCaps="false" />
+
+    <Button
         android:id="@+id/btnRecord"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
