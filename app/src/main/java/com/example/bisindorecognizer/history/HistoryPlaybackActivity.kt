@@ -14,10 +14,8 @@ import com.example.bisindorecognizer.databinding.ActivityHistoryPlaybackBinding
 import java.util.concurrent.Executors
 
 /**
- * "Flipbook" playback -- bukan video asli, cuma gonta-ganti ImageView antar frame JPEG yang
- * sudah disimpan HistoryStore (overlay box/skeleton sudah dipanggang langsung ke tiap frame,
- * lihat OverlayRenderer.renderComposite). FRAME_INTERVAL_MS dipilih supaya total durasi kira-kira
- * sama dengan durasi rekam asli (10 frame representasi 5 detik gerakan -> 500ms/frame).
+ * Plays back a saved session as a flipbook of its JPEG frames, which already contain the hand
+ * overlay (see OverlayRenderer.renderComposite). Ten frames at 500 ms match the 5-second recording.
  */
 class HistoryPlaybackActivity : AppCompatActivity() {
 
@@ -52,8 +50,7 @@ class HistoryPlaybackActivity : AppCompatActivity() {
             binding.btnDownloadSequence.isEnabled = false
             return
         }
-        // Nomor kronologis (1 = sesi pertama direkam) -- lihat sessionNumbers() -- dipakai di nama
-        // file GIF/JSON supaya sesi gampang dibedakan waktu sudah keluar dari aplikasi.
+        // Used in the exported file name
         val sessionNumber = sessionNumbers(allSessions)[session.id]
         binding.btnDownloadSequence.isEnabled = session.sequenceFile().exists()
 
@@ -75,17 +72,11 @@ class HistoryPlaybackActivity : AppCompatActivity() {
 
     private fun downloadSequence(session: HistorySession, sessionNumber: Int?) {
         binding.btnDownloadSequence.isEnabled = false
-        // Hentikan flipbook sementara -- dijalankan lagi (mainHandler.post(advanceFrame)) begitu
-        // proses ini selesai, sukses maupun gagal, lihat kedua mainHandler.post{} di bawah.
+        // Pause playback during the export; it resumes on success and on failure
         mainHandler.removeCallbacks(advanceFrame)
         backgroundExecutor.execute {
-            // catch (e: Throwable), BUKAN Exception -- OutOfMemoryError itu Error, bukan Exception,
-            // "catch (e: Exception)" tidak menangkapnya sama sekali. startActivity() JUGA dibungkus
-            // try/catch-nya SENDIRI di dalam mainHandler.post{} -- exception yang terjadi di situ
-            // jalan di thread lain (main thread), NANTI setelah try/catch level luar ini sudah
-            // selesai, jadi tidak akan pernah tertangkap kalau cuma dibungkus di level luar saja
-            // (fitur "Unduh GIF" yang dulu ada di sini kena masalah ini juga sebelum dihapus
-            // 2026-08-21 karena tetap crash terus-menerus di device -- lihat PROGRESS.md).
+            // Throwable also catches OutOfMemoryError. startActivity() has its own try/catch because
+            // it runs later on the main thread, outside this block.
             try {
                 val exported = SequenceExporter.export(applicationContext, session, sessionNumber)
                 mainHandler.post {
@@ -99,19 +90,17 @@ class HistoryPlaybackActivity : AppCompatActivity() {
                             startActivity(Intent.createChooser(shareIntent, getString(R.string.sequence_share_chooser_title)))
                         }
                     } catch (e: Throwable) {
-                        Log.e(TAG, "Gagal membuka share chooser sequence", e)
+                        Log.e(TAG, "Failed to open the share sheet", e)
                         val msg = getString(R.string.sequence_export_error, e.message ?: e.toString())
                         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Throwable) {
-                Log.e(TAG, "Gagal ekspor sequence JSON", e)
+                Log.e(TAG, "Failed to export sequence.json", e)
                 mainHandler.post {
                     binding.btnDownloadSequence.isEnabled = true
                     mainHandler.post(advanceFrame)
-                    // Pesan beda dari sequence_export_failed (session tanpa data) -- ini kasus
-                    // exception BENERAN saat proses copy/share, jadi pesan aslinya ditampilkan
-                    // langsung di toast supaya diagnosis tidak perlu adb logcat.
+                    // Show the exception message so the cause is visible without logcat
                     val msg = getString(R.string.sequence_export_error, e.message ?: e.toString())
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 }

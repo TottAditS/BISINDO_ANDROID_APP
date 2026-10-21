@@ -9,32 +9,20 @@ import java.nio.FloatBuffer
 import kotlin.math.exp
 
 /**
- * Loads mvit_v2.onnx (MViTv2 transformer baseline, for on-device accuracy/latency comparison
- * against OnnxPredictor's CNNsa-BiLSTM). Unlike OnnxPredictor's single small file loaded straight
- * from assets into memory, this model uses ONNX's external-data format (mvit_v2.onnx.data,
- * ~140MB, referenced by mvit_v2.onnx) which ONNX Runtime Android can only load from a real file
- * path -- NOT a byte array -- so both files are copied from assets to context.filesDir on first
- * use (skipped on later launches once already copied there), in the SAME directory since the
- * external-data reference inside the .onnx graph is a relative filename.
+ * Runs mvit_v2.onnx, the MViTv2 comparison model.
  *
- * Output is "logits" ONLY (shape (1,32), no attn_weights) -- different from OnnxPredictor's model
- * which exposes both.
+ * The model stores its weights in an external file, mvit_v2.onnx.data, which ONNX Runtime can only
+ * load from a file path. Both files are therefore copied from the assets to filesDir on first use,
+ * into the same folder because the graph refers to the weight file by a relative name.
  *
- * PERFORMANCE: MViTv2 is a heavy transformer (~34M params, (1,3,16,224,224) input) and was
- * observed taking 18-78 SECONDS per inference on a Poco M4 Pro (CPU-only, no NPU) vs ~400ms on a
- * desktop i7 benchmark. A `setIntraOpNumThreads(availableProcessors())` tweak was tried here and
- * REVERTED -- it made latency WORSE (~200s observed) instead of better, likely because Poco M4
- * Pro's Helio G96 is big.LITTLE (2 fast Cortex-A76 + 6 slow Cortex-A55): forcing ORT to spread
- * intra-op parallelism across all 8 cores means every parallel region waits on the slowest A55
- * thread, which can lose to just letting ORT use its own (apparently more conservative) default.
- * Left at ORT's default (no explicit thread count) -- if revisiting, try a SMALL explicit count
- * (e.g. 2, matching the fast cores) rather than all cores, and measure before keeping it.
+ * The session uses ONNX Runtime's default thread settings. Setting the thread count to all cores
+ * made inference slower on the Poco M4 Pro, whose CPU mixes 2 fast and 6 slow cores.
  */
 class MvitPredictor(context: Context) {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val session: OrtSession
 
-    /** Cold-start/model-load time (copy-if-needed + createSession) -- for comparison table. */
+    /** Time to copy the files (first run only) and create the session. */
     val loadTimeMs: Long
 
     init {
@@ -54,7 +42,7 @@ class MvitPredictor(context: Context) {
         }
     }
 
-    /** @return top-[TOP_K] (labelIndex, confidence) pairs, sorted highest confidence first. */
+    /** @return top-[TOP_K] (labelIndex, confidence) pairs, highest confidence first. */
     fun predict(clip: FloatArray): List<Pair<Int, Float>> {
         val shape = longArrayOf(1, 3, CLIP_LENGTH.toLong(), FRAME_SIZE.toLong(), FRAME_SIZE.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(clip), shape).use { inputTensor ->

@@ -3,7 +3,7 @@
 
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera.any" android:required="true"/>
-    <!-- Tanpa INTERNET permission: semuanya jalan offline/on-device -->
+    <!-- No INTERNET permission: everything runs on the device -->
 
     <application
         android:allowBackup="false"
@@ -37,9 +37,7 @@
             android:exported="false"
             android:screenOrientation="portrait"/>
 
-        <!-- Tanpa ini, share Intent buat GIF hasil export bakal FileUriExposedException di API 24+.
-             content:// lewat FileProvider tetap tidak butuh izin storage apapun (file ada di
-             cache app-private, cuma dibuka sementara ke app penerima lewat grant URI permission). -->
+        <!-- Shares exported JSON and CSV files through content:// URIs; no storage permission needed. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

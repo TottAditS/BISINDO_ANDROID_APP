@@ -9,20 +9,11 @@ import android.util.AttributeSet
 import android.view.View
 
 /**
- * Draws a bounding box + 21-point skeleton per detected hand on top of the back-camera preview
- * (see AppCameraController/rencana_fix_handedness.md Opsi A for why back, not front/selfie).
+ * Draws a bounding box and the 21-point skeleton of each detected hand over the camera preview.
  *
- * MediaPipe landmarks are normalized [0,1] against the RAW analysis bitmap (the un-rotated
- * frame HandLandmarker actually ran on). PreviewView shows that same camera stream rotated to the
- * device's natural orientation, scaled with center-crop to fill the view -- NO mirroring, since
- * CameraX/PreviewView never mirrors the back camera (only the front/selfie camera gets that
- * treatment). toViewSpace() replicates the rotation+scale so a box drawn here lands on the same
- * spot as the hand in the preview.
- *
- * Box POSITION confirmed correct on physical hardware with the FRONT camera (2026-08-01,
- * screenshot) -- the rotation/scale math is unchanged after switching to the back camera, only
- * the (now-removed) mirror step differed, so this should still hold, but re-verify on-device
- * after the camera switch.
+ * Landmarks are normalized to the unrotated analysis bitmap, while PreviewView shows the stream
+ * rotated to the device orientation and center-cropped. toViewSpace() applies the same rotation
+ * and scaling so the drawing lines up with the hand. The back camera is not mirrored.
  */
 class HandOverlayView @JvmOverloads constructor(
     context: Context,

@@ -4,18 +4,12 @@ import android.graphics.Bitmap
 import com.example.bisindorecognizer.inference.MvitPredictor
 
 /**
- * Turns a variable-length sequence of raw RGB frames (already oriented for display -- see
- * OverlayRenderer.orientForDisplay, NOT the raw sensor-orientation bitmap) into the fixed
- * (1,3,16,224,224) clip MViTv2 expects, replicating export_mvit_v2.py / mvit_dataset.py from the
- * ML research repo EXACTLY:
- * 1. Temporal sample/pad to 16 frames: >16 frames -> uniform linspace(0, T-1, 16) sampling (round
- *    to nearest index); <16 frames -> pad by repeating the LAST frame (NOT zero-padding, unlike
- *    CNNsa-BiLSTM's keypoint padding).
- * 2. Resize to 224x224 if not already that size.
- * 3. Normalize with Kinetics-400 stats (mean=0.45, std=0.225, SAME value on all 3 channels --
- *    NOT standard ImageNet mean/std).
- * 4. Transpose (T,H,W,C) -> (C,T,H,W) and flatten (batch dim is implicit -- MvitPredictor adds it
- *    via the tensor shape, not via an extra array dimension here).
+ * Turns upright RGB frames (see OverlayRenderer.orientForDisplay) into the (3, 16, 224, 224) clip
+ * expected by MViTv2, following mvit_dataset.py in the research repository:
+ * 1. Sample 16 frames uniformly (linspace, rounded); if there are fewer, repeat the last frame.
+ * 2. Resize to 224x224.
+ * 3. Normalize with the Kinetics-400 statistics (mean 0.45, std 0.225 on every channel).
+ * 4. Lay out as (C, T, H, W). The batch dimension is added by MvitPredictor.
  */
 object ClipPreprocessor {
     private const val KINETICS_MEAN = 0.45f
@@ -55,13 +49,12 @@ object ClipPreprocessor {
         val n = frames.size
         if (n == targetCount) return frames
         if (n > targetCount) {
-            // linspace(0, n-1, targetCount), rounded to nearest index -- matches mvit_dataset.py.
+            // linspace(0, n - 1, targetCount), rounded to the nearest index
             return (0 until targetCount).map { i ->
                 val pos = i * (n - 1).toFloat() / (targetCount - 1).toFloat()
                 frames[Math.round(pos).coerceIn(0, n - 1)]
             }
         }
-        // n < targetCount: pad by repeating the LAST frame (not zero-padding).
         val padded = frames.toMutableList()
         val lastFrame = frames.last()
         while (padded.size < targetCount) padded.add(lastFrame)

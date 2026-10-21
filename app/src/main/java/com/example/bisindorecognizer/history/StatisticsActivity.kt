@@ -14,9 +14,8 @@ import com.example.bisindorecognizer.databinding.ActivityStatisticsBinding
 import java.util.concurrent.Executors
 
 /**
- * "Statistik" -- daftar berpaginasi semua attempt tersimpan (sampai 200, lihat HistoryStore) +
- * 4 chart agregat per kelas gesture (latensi, CPU, RAM, akurasi). Ganti total dari
- * HistoryActivity + EvaluationActivity lama (5 sesi, tanpa ground truth).
+ * Statistics screen: a paginated list of all saved attempts and four per-class charts (latency,
+ * CPU, memory, and accuracy) comparing both models.
  */
 class StatisticsActivity : AppCompatActivity() {
 
@@ -63,11 +62,11 @@ class StatisticsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        reload() // toggle/hapus di sesi lain (mis. setelah buka HistoryPlaybackActivity) tetap sinkron
+        reload() // picks up changes made while another screen was open
     }
 
     private fun reload() {
-        // Terlama dulu supaya nomor attempt kronologis cocok dengan urutan rekam sesungguhnya.
+        // Oldest first, so attempt numbers follow the recording order
         allSessions = historyStore.listSessions().sortedBy { it.timestampMs }
         if (allSessions.isEmpty()) {
             binding.emptyText.visibility = View.VISIBLE
@@ -82,10 +81,7 @@ class StatisticsActivity : AppCompatActivity() {
             onLihat = { s -> startActivity(Intent(this, HistoryPlaybackActivity::class.java).putExtra(HistoryPlaybackActivity.EXTRA_SESSION_ID, s.id)) },
             onUnduhJson = { s, n -> downloadJson(s, n) },
             onHapus = { s -> confirmDelete(s) },
-            // Selain tulis ke disk, sinkronkan allSessions in-memory juga -- kalau tidak, chart
-            // akurasi (dihitung dari allSessions, dipicu tombol Hitung) masih pakai nilai toggle
-            // LAMA sampai activity ini reload() ulang (baru kejadian di onResume), padahal alur
-            // yang dimaksud adalah toggle lalu Hitung langsung tanpa keluar-masuk activity dulu.
+            // Also update the in-memory list so the accuracy chart uses the new value right away
             onToggleCnn = { s, checked ->
                 historyStore.updateCnnCorrectness(s.id, checked)
                 allSessions = allSessions.map { if (it.id == s.id) it.copy(cnnCorrectOverride = checked) else it }
@@ -106,13 +102,10 @@ class StatisticsActivity : AppCompatActivity() {
     private fun lastPageIndex(): Int = ((allSessions.size - 1) / pageSize).coerceAtLeast(0)
 
     private fun renderPage() {
-        // Guard: kalau belum pernah ada sesi tersimpan, reload() balik lebih awal tanpa
-        // menginisialisasi `adapter` -- tapi Spinner (pageSizeSpinner) tetap bisa menembak
-        // onItemSelected() secara deferred setelah adapter di-set, terlepas dari visibility
-        // parent-nya (contentGroup GONE tidak mencegah callback ini). Tanpa guard ini,
-        // renderPage() dipanggil -> crash lateinit property adapter belum diinisialisasi.
+        // The page-size Spinner can call this before reload() has created the adapter
+        // (when there are no sessions yet)
         if (!::adapter.isInitialized) return
-        // Halaman 1 = attempt TERBARU (terlama dulu di allSessions, jadi ambil dari belakang).
+        // Page 1 shows the newest attempts
         val newestFirst = allSessions.asReversed()
         val start = (currentPage * pageSize).coerceIn(0, newestFirst.size)
         val end = (start + pageSize).coerceAtMost(newestFirst.size)
@@ -168,13 +161,13 @@ class StatisticsActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Throwable) {
-                Log.e(TAG, "Gagal ekspor CSV statistik", e)
+                Log.e(TAG, "Failed to export the statistics CSV", e)
                 runOnUiThread { Toast.makeText(this, "Gagal ekspor CSV: ${e.message}", Toast.LENGTH_LONG).show() }
             }
         }
     }
 
-    // Latensi/CPU/RAM tidak butuh ground truth -- bisa langsung dihitung begitu layar dibuka.
+    // Latency, CPU, and memory need no ground truth, so they are drawn when the screen opens.
     private fun renderRateCharts() {
         val byClass = allSessions.filter { it.targetClass != null }.groupBy { it.targetClass!! }
         val labels = LabelMap.all().filter { byClass.containsKey(it) }
@@ -198,8 +191,8 @@ class StatisticsActivity : AppCompatActivity() {
         }, "MB")
     }
 
-    // Akurasi butuh toggle correctness (auto ATAU manual) -- dipicu manual via tombol Hitung
-    // supaya user bisa review/override toggle dulu sebelum lihat ringkasannya.
+    // Accuracy uses the correctness toggles, so it is computed on demand with the Calculate button
+    // after the toggles have been reviewed.
     private fun renderAccuracyChart() {
         val byClass = allSessions.filter { it.targetClass != null }.groupBy { it.targetClass!! }
         val labels = LabelMap.all().filter { byClass.containsKey(it) }

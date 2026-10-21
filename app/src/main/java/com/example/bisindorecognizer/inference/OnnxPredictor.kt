@@ -7,24 +7,15 @@ import android.content.Context
 import java.nio.FloatBuffer
 import kotlin.math.exp
 
-/** Loads cnnsa_bilstm.onnx from assets and runs softmax+top-K over the "logits" output. */
+/** Runs cnnsa_bilstm.onnx from the assets and returns the top-K classes of the "logits" output. */
 class OnnxPredictor(context: Context) {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession
+    private val session: OrtSession = env.createSession(
+        context.assets.open("cnnsa_bilstm.onnx").use { it.readBytes() },
+        OrtSession.SessionOptions()
+    )
 
-    /** Cold-start/model-load time -- measured for on-device comparison against MvitPredictor. */
-    val loadTimeMs: Long
-
-    init {
-        val start = System.nanoTime()
-        session = env.createSession(
-            context.assets.open("cnnsa_bilstm.onnx").use { it.readBytes() },
-            OrtSession.SessionOptions()
-        )
-        loadTimeMs = (System.nanoTime() - start) / 1_000_000
-    }
-
-    /** @return top-[TOP_K] (labelIndex, confidence) pairs, sorted highest confidence first. */
+    /** @return top-[TOP_K] (labelIndex, confidence) pairs, highest confidence first. */
     fun predict(sequence: FloatArray): List<Pair<Int, Float>> {
         val shape = longArrayOf(1, SEQUENCE_LENGTH.toLong(), FEATURE_SIZE.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(sequence), shape).use { inputTensor ->

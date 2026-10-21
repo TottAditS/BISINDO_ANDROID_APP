@@ -1,300 +1,132 @@
-# BISINDO Live Sign-Recognition Android App
+# BISINDO Recognizer (Android)
 
-Aplikasi Android native (Kotlin) yang mengenali isyarat BISINDO secara real-time dari kamera live:
-kamera → ekstraksi keypoint tangan on-device (MediaPipe Hands) → inference **dua model** ONNX
-(CNNsa-BiLSTM sebagai model utama + MViTv2 sebagai pembanding) → hasil, latency, dan pemakaian
-CPU/RAM kedua model ditampilkan berdampingan. Sepenuhnya offline, tidak ada permission INTERNET.
+Android application for recognizing word-level Indonesian Sign Language (BISINDO) from the phone
+camera. It runs two models on the same recording and shows their results side by side:
 
-Repo ini **terpisah total** dari repo riset ML Python (`CNN-LSTM_BISINDO_Android`) demi tetap
-modular — satu-satunya keterkaitan adalah 2 file model (`cnnsa_bilstm.onnx`, `mvit_v2.onnx` +
-`.onnx.data`) yang di-copy manual ke `app/src/main/assets/`, tanpa dependency source code,
-submodule, atau shared build config.
+- **CNNsa-BiLSTM**, a lightweight model that reads MediaPipe hand keypoints (15.4 MB as ONNX)
+- **MViTv2-S**, a video transformer that reads RGB frames (143 MB as ONNX), used for comparison
 
-## Status saat ini
+Everything runs on the device's CPU with ONNX Runtime; the app has no internet permission. The
+user interface is in Indonesian.
 
-**Selesai dan tervalidasi di device fisik** (Poco M4 Pro). Semua fitur yang direncanakan sudah
-jalan end-to-end: rekam gestur, dua model berjalan & dibandingkan pada rekaman yang sama, riwayat
-sesi dengan playback, tabel evaluasi lengkap (10-jendela CNN, latency, CPU/RAM, ukuran model), dan
-ekspor data keypoint mentah (JSON) untuk diagnosis numerik. Log lengkap tiap keputusan, bug, dan
-perbaikan (termasuk beberapa yang butuh beberapa iterasi sebelum benar-benar solid) ada di
-[`PROGRESS.md`](PROGRESS.md) — baca itu dulu kalau lanjut sesi baru, dokumen ini fokus ke
-"bagaimana aplikasi ini bekerja sekarang", bukan kronologi.
+The models are trained in the research repository
+[CNN-LSTM_BISINDO_Android](https://github.com/TottAditS/CNN-LSTM_BISINDO_Android).
 
-**Perjalanan singkat menuju kondisi sekarang** (detail penuh di `PROGRESS.md`):
-CNNsa-BiLSTM sempat berjalan hampir sempurna di validasi desktop (95.31% akurasi test set) tapi
-gagal total saat diuji live oleh pengguna sungguhan di HP — root cause-nya BUKAN kualitas model,
-melainkan dua bug di sisi Android: (1) label handedness ("Left"/"Right" MediaPipe) live ternyata
-kebalikan dari distribusi data training, dan (2) bitmap sensor mentah tidak pernah dirotasi ke
-orientasi tegak sebelum diberikan ke MediaPipe. Setelah kedua bug ini diperbaiki dan divalidasi
-ulang (replay 5 sesi live sungguhan lewat model ONNX asli di desktop: 0/5 benar → 5/5 benar,
-~100% confidence), pengujian di device nyata mengonfirmasi perbaikannya (4/5 lalu 3/3 benar pada
-sesi lanjutan). Di atas perbaikan itu ditambahkan strategi **10 jendela geser** ("sliding window")
-per sesi rekam — alih-alih menuntut pengguna menebak persis detik keberapa harus mulai bergerak,
-CNNsa-BiLSTM dijalankan atas 10 posisi jendela 30-frame yang tersebar di seluruh rekaman 5 detik,
-dan hasil confidence tertinggi yang dipakai. Satu fitur (ekspor GIF flipbook ke luar aplikasi)
-diimplementasikan penuh, lolos verifikasi independen di Python, tapi tetap crash berulang di
-device tanpa akses `adb logcat` untuk mendiagnosis lebih lanjut — atas keputusan eksplisit,
-fitur itu **dihapus** (preview flipbook in-app yang tidak pernah memakai kode bermasalah itu tetap
-ada, cuma tombol unduh/share-nya yang dicabut).
+## Features
 
-## Fitur Utama
+- **Camera**: live preview with a hand skeleton overlay. "Rekam (5 dtk)" records for 5 seconds,
+  then runs CNNsa-BiLSTM on 10 sliding windows and MViTv2 on one 16-frame clip. For each model
+  the app shows the predicted sign, confidence, latency, and model size. The target class is
+  chosen before recording so that correctness is logged automatically.
+- **Statistics**: paginated list of all saved attempts (up to 200) with predictions, latency, CPU
+  usage, memory, and a correctness toggle per model; per-class charts of latency, CPU, memory, and
+  accuracy; export of all attempts to one CSV file.
+- **Playback**: flipbook of 10 saved frames per attempt with the overlay, and export of the
+  CNNsa-BiLSTM input sequence (`sequence.json`, 30 x 126 values).
 
-- **Rekam & Bandingkan** (`CameraActivity`): preview kamera live dengan overlay skeleton/bounding
-  box tangan real-time, tombol "Rekam (5 dtk)" menjalankan CNNsa-BiLSTM (10 jendela geser, hasil
-  confidence tertinggi jadi jawaban akhir) dan MViTv2 (satu klip 16-frame) atas rekaman yang sama,
-  menampilkan gloss + confidence + latency **kedua model** berdampingan.
-- **Riwayat** (`HistoryActivity` → `HistoryPlaybackActivity`): daftar sesi tersimpan diberi nomor
-  kronologis ("Sesi N: <gloss>"), tap sesi untuk playback flipbook (frame JPEG dengan overlay
-  sudah dipanggang langsung ke tiap frame) dan mengunduh/membagikan data keypoint mentah sesi itu
-  sebagai `sequence.json` (30×126 float, persis yang dikirim ke CNNsa-BiLSTM) lewat share sheet
-  Android — dipakai untuk diagnosis numerik tanpa perlu adb.
-- **Evaluasi** (`EvaluationActivity`): tabel perbandingan CNNsa-BiLSTM (breakdown confidence
-  ke-10 jendela geser, yang menang ditandai "(dipilih)") vs MViTv2 per sesi, latency inferensi,
-  jumlah frame mentah terdeteksi vs frame yang benar-benar dipakai model (menyingkap throughput
-  device), penggunaan CPU% dan RAM (PSS, MB) tiap model, ukuran model, plus grafik latensi.
-- **Overlay skeleton tangan live**: digambar terus-menerus selama preview (termasuk saat merekam),
-  bukan cuma kotak panduan statis — pengguna bisa melihat langsung titik/rangka tangannya sendiri
-  untuk membidik gestur lebih presisi.
+## How recognition works
 
-## Context
+1. CameraX delivers 640x480 frames from the back camera. MediaPipe Hands (Tasks API, LIVE_STREAM)
+   detects up to two hands with 21 landmarks each.
+2. Each frame becomes a 126-value vector as in training: one hand in [0:63], the other in
+   [63:126], each landmark relative to the wrist and divided by the wrist-to-middle-MCP distance.
+   A missing hand is all zeros. Two corrections make the live data match the training data: the
+   handedness label from the back camera is mirrored, and landmarks are rotated to the upright
+   orientation before normalization (see `HandLandmarkExtractor.kt`).
+3. During the 5-second recording, frames are kept at about 15 fps, the training frame rate.
+4. CNNsa-BiLSTM: `KeypointSequenceBuilder` builds 10 windows of 30 frames, spread over the
+   recording and aligned by timestamp. Each window is classified, and the most confident window
+   gives the result, so the user does not have to start the sign at an exact moment.
+5. MViTv2: `ClipPreprocessor` samples 16 frames uniformly from the recording, resizes them to
+   224x224, and normalizes them with the Kinetics-400 mean and standard deviation.
+6. CPU usage (process CPU time over wall-clock time) and memory (PSS of the app) are measured
+   around each model call (`PerformanceMetrics.kt`).
 
-Bagian riset ML (repo `CNN-LSTM_BISINDO_Android`) sudah selesai: PreProcessing → FeatureExtraction
-→ Training (CNNsa-BiLSTM 95.31% test accuracy, MViTv2 99.22%) → Export ke ONNX, keduanya
-tervalidasi. **Kedua model** masuk ke aplikasi ini: CNNsa-BiLSTM (ringan, keypoint MediaPipe
-126-dim, ONNX 14.65MB) sebagai model utama untuk inferensi real-time, dan MViTv2 (raw video
-`(1,3,16,224,224)`, ONNX ~143MB termasuk external-data file) sebagai pembanding
-akurasi-vs-efisiensi langsung di dalam aplikasi — bukan cuma dokumentasi/pembanding di luar app
-seperti rencana awal, ini adalah salah satu fitur inti (layar Rekam & Bandingkan, layar Evaluasi).
+## Requirements
 
-Batasan desain yang tetap dipegang sejak awal:
-- **Tidak pakai Android Studio** — dikerjakan dari **VSCode + terminal**, JDK + Android SDK
-  command-line tools + Gradle.
-- **Kotlin**, Android native (MediaPipe Hands tidak didukung resmi di Unity).
-- **Repo/folder terpisah total** dari repo riset ML Python.
-- **Input real-time via kamera** (bukan upload video).
-- Device testing: HP fisik, **Poco M4 Pro** (Android 11, API 30), via USB debugging.
+- JDK 17
+- Android SDK with `platforms;android-36`, `build-tools;36.0.0`, and `platform-tools`
+  (Android Studio or the command-line tools)
+- A phone with Android 8.0 (API 26) or newer and an arm64-v8a CPU
 
-## Toolchain (tanpa Android Studio)
+The Gradle wrapper (Gradle 8.13), Android Gradle Plugin 8.13.0, and Kotlin 2.1.20 are configured
+in the project.
 
-- **JDK 17**
-- **Gradle 8.13** (bootstrap wrapper sekali, lalu `.\gradlew.bat` seterusnya)
-- **Android SDK "Command line tools only"**, via `sdkmanager`: `platform-tools` (adb) +
-  `platforms;android-35` + `platforms;android-36` + `build-tools;35.0.0` + `build-tools;36.0.0`
-- **AGP 8.13.0** + **Kotlin plugin 2.1.20** (butuh JDK 17)
-- `compileSdk=36` (androidx.camera:*:1.6.1 mensyaratkan compileSdk ≥ 36 — ketauan dari
-  `assembleDebug` gagal di `checkDebugAarMetadata` sampai dinaikkan dari draft awal 35),
-  `targetSdk=34`, `minSdk=26` — `targetSdk`/`minSdk` tidak berubah, jadi kompatibilitas device
-  (Poco M4 Pro Android 11/API 30) tidak terpengaruh.
-- Testing: Poco M4 Pro via USB debugging + `adb install -r` / `adb logcat` untuk sesi debugging
-  aktif (dipakai berulang kali selama iterasi fitur di atas).
+| Library | Version |
+|---|---|
+| CameraX | 1.6.1 |
+| MediaPipe Tasks Vision | 0.10.35 |
+| ONNX Runtime Android | 1.28.0 |
 
-### VSCode extensions
+## Build and install
 
-Build/run sepenuhnya lewat terminal (`.\gradlew.bat assembleDebug`, `adb install -r`); extension
-di bawah ini murni untuk editing.
+1. Clone this repository.
+2. Copy the MViTv2 model files into `app/src/main/assets/`. They are not in this repository
+   because `mvit_v2.onnx.data` is larger than GitHub's 100 MB file limit:
+   - `mvit_v2.onnx`
+   - `mvit_v2.onnx.data`
 
-| Extension | ID | Fungsi |
-|---|---|---|
-| Kotlin | `fwcd.kotlin` | Syntax highlighting + language server untuk file `.kt`. |
-| Gradle for Java | `vscjava.vscode-gradle` | Panel sidebar untuk jalankan Gradle task tanpa hafal command. |
-| XML | `redhat.vscode-xml` | Syntax highlight + validasi untuk manifest & layout XML. |
+   Both files are produced by `Export/ExportModels.ipynb` in the research repository, in
+   `Export/Output/onnx/`. `cnnsa_bilstm.onnx` and `hand_landmarker.task` are already included.
+   Without the MViTv2 files the app still runs and reports MViTv2 as unavailable.
+3. Point Gradle to the Android SDK, either with the `ANDROID_HOME` environment variable or a
+   `local.properties` file containing `sdk.dir=<path to the SDK>`.
+4. Build and install over USB with debugging enabled:
 
-## Preprocessing real-time & replikasi training (inti teknis aplikasi)
-
-Training pipeline (Python) memproses video yang sudah direkam secara batch. Aplikasi live tidak
-punya langkah preprocessing terpisah — logika yang sama dijalankan terus-menerus per frame:
-
-1. Kamera menangkap frame terus-menerus; setiap frame yang berhasil dianalisis MediaPipe langsung
-   diproses jadi vector 126 angka (lihat aturan di bawah). Overlay skeleton diupdate dari hasil
-   yang sama, live, tidak menunggu sesi rekam selesai.
-2. Selama sesi "Rekam" (durasi tetap 5 detik, **bukan** "berhenti begitu 30 frame terkumpul" —
-   desain awal itu bikin sesi rekam sering gagal begitu ada kerja ekstra per-frame yang
-   memperlambat throughput MediaPipe), setiap hasil deteksi yang lolos throttle ~15fps (menyamai
-   `target_fps` training) disimpan bersama timestamp elapsed-nya.
-3. Di akhir rekaman, `KeypointSequenceBuilder.alignToSlidingWindows()` memotong seluruh rekaman
-   jadi **10 jendela 30-frame** dengan titik mulai tersebar merata (berbasis timestamp, bukan
-   index array — device yang throughput-nya jauh dari 15fps tetap dapat jendela yang mewakili
-   pacing gerakan ~2 detik yang diasumsikan training). CNNsa-BiLSTM dijalankan atas ke-10nya;
-   jendela dengan confidence top-1 tertinggi yang jadi jawaban akhir, seluruh 10 hasil tetap
-   dicatat untuk layar Evaluasi.
-4. MViTv2 memakai `ClipPreprocessor` (linspace sampling 16 frame dari seluruh rekaman, resize ke
-   ukuran training) atas rekaman yang sama, dijalankan sekali per sesi.
-
-### Aturan vector 126-float (WAJIB identik dengan training)
-
-Diverifikasi dari `FeatureExtraction/Scripts/keypoint_extractor.py`,
-`FeatureExtraction/Config/feature_config.py`, `Training/CNNsaBiLSTM/Models/cnnsa_bilstm.py`,
-`Export/Scripts/export_cnnsa_bilstm.py` di repo riset ML.
-
-- MediaPipe Hands, maksimal 2 tangan. Per tangan terdeteksi: 21 landmark × (x,y,z) = 63 nilai.
-- Layout vector per frame (126 float): **tangan Kiri → [0:63], tangan Kanan → [63:126]**,
-  tangan tidak terdeteksi = nol semua.
-- **Normalisasi per tangan**: kurangi wrist (landmark index 0) dari seluruh 21 landmark, lalu bagi
-  semua koordinat dengan jarak Euclidean(wrist, landmark index 9 = middle-finger MCP); skip
-  pembagian jika jarak itu < 1e-6.
-- Model input tensor **"keypoints"**, shape `(1,30,126)` float32. Output **"logits"** `(1,32)`
-  (softmax + argmax → kelas + confidence).
-- Mapping label → gloss BISINDO (`LabelMap.kt`, 32 kelas — daftar lengkap ada di kode, sumbernya
-  disediakan terpisah oleh user karena `feature_config.py`'s `LABEL_MAP` di repo riset ML hanya
-  placeholder `"label_N"`).
-
-### Bug root-cause yang wajib diketahui sebelum menyentuh `HandLandmarkExtractor.kt`
-
-Ditemukan 2026-08-20 dengan membandingkan `sequence.json` hasil ekspor 5 sesi live terhadap sample
-training desktop asli untuk kelas gloss yang sama, lintas 5 signer training — dua bug yang saling
-memperparah, **bukan** masalah kualitas model:
-
-1. **Handedness terbalik**: label `categoryName()` MediaPipe live ("Left"/"Right") ternyata
-   kebalikan total dari distribusi label di data training (mengganti ke kamera belakang, langkah
-   perbaikan sebelumnya, TIDAK memperbaiki ini seperti yang diasumsikan). Fix: `"Left" -> 63,
-   "Right" -> 0` (bukan pemetaan naif `"Left"->0`).
-2. **Rotasi belum diterapkan**: bitmap sensor mentah yang diberikan ke MediaPipe di jalur
-   CNNsa-BiLSTM tidak pernah dirotasi ke orientasi tegak sebelum `detectAsync()` — beda dari jalur
-   MViTv2 yang sudah memanggil `OverlayRenderer.orientForDisplay()`. Fix: terapkan
-   `OverlayRenderer.rotateNormalized()` (rotasi yang sama, sudah terverifikasi lewat overlay) ke
-   tiap landmark (x,y) sebelum normalisasi wrist-relative.
-
-Kedua fix divalidasi bersama secara offline (replay 5 sesi live sungguhan lewat model ONNX asli di
-desktop): 0/5 benar → 5/5 benar, ~100% confidence masing-masing. Tervalidasi ulang di device
-fisik pada pengujian lanjutan (4/5, lalu 3/3 dari sesi yang valid — 1 sesi lain sengaja direkam
-dengan kamera digoyang sebagai uji ketahanan, bukan kegagalan). Detail lengkap, termasuk dua bug
-tambahan yang lebih halus (flicker klasifikasi handedness saat gerakan cepat, dan misdetection
-MediaPipe mengunci ke area bukan-tangan) serta mitigasinya (majority-vote smoothing per tangan
-yang di-track, filter confidence handedness tambahan) ada di doc comment
-`HandLandmarkExtractor.kt` dan `PROGRESS.md`.
-
-## Struktur project
-
-```
-BISINDO_ANDROID_APP/
-├── settings.gradle.kts, build.gradle.kts, gradle.properties
-├── gradlew, gradlew.bat, gradle/wrapper/
-├── PROGRESS.md                  log progress/keputusan lintas sesi
-├── app/
-│   ├── build.gradle.kts
-│   ├── src/main/
-│   │   ├── AndroidManifest.xml         permission CAMERA saja (tanpa INTERNET)
-│   │   ├── assets/
-│   │   │   ├── cnnsa_bilstm.onnx        copy manual dari repo riset ML
-│   │   │   ├── mvit_v2.onnx(.data)      copy manual dari repo riset ML
-│   │   │   └── hand_landmarker.task     dari bucket resmi MediaPipe
-│   │   ├── res/{layout,values,xml}/
-│   │   └── java/com/example/bisindorecognizer/
-│   │       ├── MainActivity.kt                  layar Menu: Buka Kamera / Riwayat / Keluar
-│   │       ├── CameraActivity.kt                layar Rekam & Bandingkan (lihat Fitur Utama)
-│   │       ├── LabelMap.kt                      index (0-31) -> gloss BISINDO
-│   │       ├── camera/AppCameraController.kt    CameraX ProcessCameraProvider + ImageAnalysis
-│   │       ├── keypoints/HandLandmarkExtractor.kt    MediaPipe Tasks, vector 126-float,
-│   │       │                                          koreksi handedness+rotasi (lihat di atas)
-│   │       ├── keypoints/KeypointSequenceBuilder.kt  10-jendela geser + center-crop tunggal
-│   │       ├── keypoints/ClipPreprocessor.kt         preprocessing klip 16-frame untuk MViTv2
-│   │       ├── inference/OnnxPredictor.kt            sesi ONNX Runtime CNNsa-BiLSTM
-│   │       ├── inference/MvitPredictor.kt            sesi ONNX Runtime MViTv2
-│   │       ├── overlay/OverlayRenderer.kt            rotasi/orientasi, render komposit ke JPEG
-│   │       ├── overlay/HandOverlayView.kt            gambar skeleton/bounding box live
-│   │       ├── overlay/HandOverlayData.kt            data class hasil deteksi untuk overlay
-│   │       ├── metrics/PerformanceMetrics.kt         snapshot CPU%/RAM sekitar tiap predict()
-│   │       └── history/
-│   │           ├── HistoryActivity.kt               daftar Riwayat
-│   │           ├── HistoryPlaybackActivity.kt        flipbook + unduh sequence.json
-│   │           ├── HistorySessionAdapter.kt          adapter RecyclerView Riwayat
-│   │           ├── HistoryStore.kt                   simpan/baca sesi (files/history/)
-│   │           ├── HistorySession.kt                 data class sesi + sessionNumbers()
-│   │           ├── SequenceExporter.kt                ekspor sequence.json via share sheet
-│   │           ├── EvaluationActivity.kt              tabel & grafik perbandingan
-│   │           └── LatencyChartView.kt                grafik latensi custom view
-└── README.md                    dokumen ini
+```bash
+./gradlew assembleDebug                                   # Windows: .\gradlew.bat assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### Dependency `app/build.gradle.kts`
+On the first launch of the camera screen, the app copies the MViTv2 files to internal storage,
+which takes a few seconds.
 
-```kotlin
-implementation("androidx.core:core-ktx:1.15.0")
-implementation("androidx.appcompat:appcompat:1.7.0")
-implementation("com.google.android.material:material:1.12.0")
-implementation("androidx.recyclerview:recyclerview:1.3.2")
+## Reproducing the on-device test
 
-val cameraxVersion = "1.6.1"
-implementation("androidx.camera:camera-core:$cameraxVersion")
-implementation("androidx.camera:camera-camera2:$cameraxVersion")
-implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
-implementation("androidx.camera:camera-view:$cameraxVersion")
+1. Open the camera screen and choose the target class with the class button.
+2. Press "Rekam (5 dtk)" and perform the sign, or play a WL-BISINDO test clip on a monitor in
+   front of the camera. Wait until both results appear.
+3. Repeat for every attempt. In the study, each of the 32 classes was recorded 5 times on a
+   Xiaomi Poco M4 Pro.
+4. Open "Statistik", check the correctness toggles, and press "Unduh Semua Statistik (CSV)" to
+   export all attempts. The CSV files from the study are in `AndroidEvaluation/` of the research
+   repository.
 
-implementation("com.google.mediapipe:tasks-vision:0.10.35")
-implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
-implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-```
-Versi di atas dipin 2026-07-31 dari metadata Google Maven/Maven Central saat itu, terbukti
-kompatibel satu sama lain di device nyata. Kalau lanjut kerjakan repo ini jauh di kemudian hari,
-cek ulang `maven-metadata.xml` sebelum upgrade — tidak wajib, tapi versi di atas bisa saja sudah
-tidak "latest".
+CSV columns: attempt, targetClass, timestampMs, rawFrames, capturedFrames, then for each model
+(cnn, mvit) the label, confidence, latency in ms, CPU percent, memory in KB, and correctness.
 
-## Alur navigasi & lifecycle app
+## Project structure
 
 ```
-MainActivity (launcher, Menu)
- ├─ "Buka Kamera"  -> CameraActivity
- ├─ "Riwayat"       -> HistoryActivity -> (tap sesi) HistoryPlaybackActivity
- │                                     -> (tombol Evaluasi) EvaluationActivity
- └─ "Keluar"        -> finishAndRemoveTask()
+app/src/main/
+  AndroidManifest.xml
+  assets/
+    cnnsa_bilstm.onnx                 CNNsa-BiLSTM
+    hand_landmarker.task              MediaPipe hand landmark model
+    mvit_v2.onnx, mvit_v2.onnx.data   MViTv2 (copied manually, see above)
+  java/com/example/bisindorecognizer/
+    MainActivity.kt                   menu
+    CameraActivity.kt                 recording and inference of both models
+    LabelMap.kt                       class index to gloss (32 classes)
+    camera/AppCameraController.kt     CameraX preview and analysis
+    keypoints/HandLandmarkExtractor.kt   MediaPipe and the 126-value vector
+    keypoints/KeypointSequenceBuilder.kt sliding 30-frame windows
+    keypoints/ClipPreprocessor.kt     16-frame clip for MViTv2
+    inference/OnnxPredictor.kt        CNNsa-BiLSTM session
+    inference/MvitPredictor.kt        MViTv2 session
+    metrics/PerformanceMetrics.kt     CPU and memory measurement
+    overlay/                          live overlay and annotated frames
+    history/                          saved attempts, statistics screen, charts, exports
+  res/                                layouts, strings, theme
 ```
 
-**Tidak ada kamera nyala di background** setelah keluar/tutup kamera, dua lapis:
-1. `AppCameraController` di-bind ke `lifecycleOwner = this` (CameraActivity) — CameraX otomatis
-   unbind & lepas hardware kamera begitu lifecycle STOPPED/DESTROYED, termasuk kalau activity
-   di-kill paksa sistem.
-2. `CameraActivity.onDestroy()` eksplisit memanggil `cameraController.shutdown()`,
-   `handLandmarkExtractor.close()`, `onnxPredictor.close()`, `mvitPredictor?.close()` — native
-   resource MediaPipe & kedua sesi ONNX Runtime tidak otomatis terikat ke lifecycle activity
-   seperti CameraX, jadi harus dilepas manual.
+## Classes
 
-## Metrik performa (CPU% / RAM)
+Air, Belajar, Cari, Hari, Ingat, Lagi, Maaf, Makan, Motor, Saya, Terima kasih, Tuli, Apa, Siapa,
+Kapan, Di mana, Mengapa, Bagaimana, Merah, Kuning, Hijau, Hitam, Dengar, Berangkat, Datang, Teman,
+Keluarga, Rumah, Pagi, Siang, Sore, Malam (indices 0 to 31, as in WL-BISINDO).
 
-`metrics/PerformanceMetrics.kt` mengambil snapshot CPU dan RAM (PSS) tepat sebelum/sesudah
-`predict()` tiap model, dipakai untuk mengisi kolom CPU%/RAM di layar Evaluasi dan menutup
-komitmen di Bab 1 laporan skripsi ("penggunaan memori... serta konsumsi CPU") yang sebelumnya
-tidak pernah benar-benar diukur. Nilai MViTv2 bernilai `null` (bukan nol) kalau MViTv2 gagal
-dimuat/OOM/tidak ada frame untuk sesi itu — beda makna dari "diukur tapi hasilnya nol".
+## Authors
 
-## Risiko / catatan teknis yang sudah divalidasi
-
-1. **Konflik nama class**: wrapper CameraX sendiri dinamai `AppCameraController` (bukan
-   `CameraController`) untuk menghindari ambiguitas dengan `androidx.camera.view.CameraController`.
-2. **Disiplin `imageProxy.close()`**: wajib di `finally`, lupa bikin pipeline kamera macet diam-diam.
-3. **Monotonicity timestamp `detectAsync`**: pakai `SystemClock.uptimeMillis()`, bukan
-   `System.currentTimeMillis()` atau timestamp sensor `ImageProxy`.
-4. **Threading**: callback hasil LIVE_STREAM MediaPipe tidak dijamin jalan di main thread — semua
-   update `View` dipindah lewat `Handler(Looper.getMainLooper())`.
-5. **Konflik dependency/native-lib**: `packaging{}` (excludes + `pickFirsts` pada
-   `libc++_shared.so`) menangani konflik `META-INF/...` antar AAR CameraX/MediaPipe/ONNX Runtime;
-   `abiFilters=["arm64-v8a"]` saja (ABI Poco M4 Pro).
-6. **`compileSdk >= 36` untuk CameraX 1.6.1** — kejadian nyata, bukan teori: `compileSdk=35`
-   gagal di `checkDebugAarMetadata`.
-7. **`--` di tengah komentar XML itu ilegal** secara sintaks XML (cuma boleh sebagai penutup
-   `-->`) — bikin `processDebugMainManifest`/manifest merger gagal parse tanpa pesan lokasi yang
-   jelas. Semua komentar XML di repo ini sengaja menghindari `--` di tengah teks.
-8. **Handedness + rotasi (root cause CNNsa-BiLSTM live)** — lihat bagian tersendiri di atas,
-   temuan paling signifikan dalam pengembangan app ini.
-9. **NeuQuant/GIF encoder bug** (fitur yang sudah dihapus): quantizer warna kustom untuk encoding
-   GIF punya bug nyata (`unbiasnet()` lupa right-shift, index out of bounds) yang diperbaiki dan
-   diverifikasi independen lewat port Python — tapi crash lain yang tidak berhasil didiagnosis
-   (tanpa akses `adb logcat` saat itu) tetap terjadi persis di titik `startActivity()` share
-   sheet. Setelah beberapa lapis mitigasi (`catch (e: Throwable)` untuk menangkap
-   `OutOfMemoryError`, downscale bitmap, pause flipbook saat ekspor) tidak menyelesaikannya, fitur
-   unduh/share GIF **dihapus total** (`gif/` package dihapus) — preview flipbook in-app yang tidak
-   pernah memakai kode itu tetap ada dan tidak pernah bermasalah.
-
-## Verifikasi
-
-1. `.\gradlew.bat clean assembleDebug` -> `app\build\outputs\apk\debug\app-debug.apk`.
-2. `adb devices` menampilkan device sebagai `device` (USB debugging authorized); `adb install -r`.
-3. Test manual di device: Menu -> Buka Kamera -> izin kamera -> "Rekam (5 dtk)" -> lakukan satu
-   gerakan isyarat -> hasil CNNsa-BiLSTM & MViTv2 (gloss, confidence, latency) tampil berdampingan,
-   sesi tersimpan ke Riwayat. **Sudah tervalidasi berhasil berulang kali** di Poco M4 Pro,
-   termasuk setelah perbaikan handedness+rotasi (sesi lanjutan: 4/5 lalu 3/3 benar dari sesi
-   valid, confidence mendekati 100%) — lihat `PROGRESS.md` untuk log lengkap tiap sesi pengujian.
-4. Layar Riwayat -> tap sesi -> flipbook frame terputar, tombol unduh data keypoint (JSON)
-   membuka share sheet Android dengan `sequence.json` sesi itu.
-5. Layar Evaluasi -> tabel menampilkan breakdown 10 jendela CNNsa-BiLSTM (satu ditandai
-   "(dipilih)"), hasil MViTv2, latency, CPU%/RAM, ukuran model, dan grafik latensi untuk semua
-   sesi tersimpan.
+Totti Adithana Sunarto and Benfano Soewito, Master of Computer Science, BINUS Graduate Program,
+Bina Nusantara University, Jakarta, Indonesia.

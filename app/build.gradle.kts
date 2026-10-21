@@ -47,8 +47,6 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    // Pinned 2026-07-31 against Google Maven / Maven Central metadata (README asked to
-    // re-verify before build rather than trust the drafted numbers).
     implementation("com.google.mediapipe:tasks-vision:0.10.35")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

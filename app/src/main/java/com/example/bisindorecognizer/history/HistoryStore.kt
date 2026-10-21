@@ -8,8 +8,9 @@ import java.io.File
 import java.io.FileOutputStream
 
 /**
- * Persists one JSON+JPEG folder per recording under context.filesDir/history/ (app-private, no
- * permission needed). Keeps only the [MAX_SESSIONS] most recent; older ones auto-pruned.
+ * Stores one folder per recording under filesDir/history/ (app-private storage): the playback
+ * JPEG frames, the CNNsa-BiLSTM input sequence, and metadata.json. Only the [MAX_SESSIONS] most
+ * recent sessions are kept.
  */
 class HistoryStore(context: Context) {
     private val rootDir = File(context.filesDir, "history").apply { mkdirs() }
@@ -40,8 +41,7 @@ class HistoryStore(context: Context) {
             }
         }
 
-        // Flat array + shape eksplisit (bukan array-of-array) supaya gampang di-load
-        // numpy.array(data).reshape(shape) di sisi analisis desktop.
+        // Flat data plus an explicit shape, so numpy.array(data).reshape(shape) restores it
         val sequenceJson = JSONObject().apply {
             put("shape", JSONArray(listOf(30, 126)))
             put("data", JSONArray().apply { cnnSequence.forEach { put(it.toDouble()) } })
@@ -69,12 +69,11 @@ class HistoryStore(context: Context) {
         pruneOldSessions()
     }
 
-    /** Timpa toggle correctness manual (null = kembali ke auto-compute dari targetClass).
-     * CNN dan MViT2 masing-masing punya method sendiri (bukan 1 method 2 parameter) supaya tiap
-     * toggle baca-tulis field-nya sendiri langsung dari disk, tidak bergantung nilai sibling dari
-     * objek HistorySession di memori (yang bisa stale kalau toggle lain ditekan sebelum reload()
-     * berikutnya -- dulu ini menyebabkan toggle kedua menimpa balik toggle pertama). No-op kalau
-     * sessionId tidak ditemukan. */
+    /**
+     * Sets or clears (null) the manual correctness override. Each model has its own method that
+     * reads and writes only its own field on disk, so two quick toggles cannot overwrite each other.
+     * Does nothing if the session does not exist.
+     */
     fun updateCnnCorrectness(sessionId: String, cnnCorrect: Boolean?) {
         val metaFile = File(File(rootDir, sessionId), "metadata.json")
         if (!metaFile.exists()) return
@@ -91,7 +90,6 @@ class HistoryStore(context: Context) {
         metaFile.writeText(json.toString())
     }
 
-    /** Hapus 1 attempt tertentu (beda dari pruneOldSessions() yang otomatis dari sesi terlama). */
     fun deleteSession(sessionId: String) {
         File(rootDir, sessionId).deleteRecursively()
     }
@@ -119,7 +117,7 @@ class HistoryStore(context: Context) {
         return dirs.mapNotNull(::readMetadata).sortedByDescending { it.timestampMs }
     }
 
-    // Toleransi metadata.json hilang/rusak -- skip sesi itu, bukan crash seluruh daftar.
+    // A session with a missing or corrupt metadata.json is skipped instead of breaking the list.
     private fun readMetadata(dir: File): HistorySession? {
         val metaFile = File(dir, "metadata.json")
         if (!metaFile.exists()) return null
@@ -133,7 +131,7 @@ class HistoryStore(context: Context) {
                 mvitLatencyMs = if (json.has("mvitLatencyMs")) json.getLong("mvitLatencyMs") else null,
                 timestampMs = json.getLong("timestampMs"),
                 frameCount = json.getInt("frameCount"),
-                // has() guards: sesi lama (sebelum field ini ditambah) tetap kebaca, cuma tampil 0.
+                // has() keeps sessions saved by older app versions readable
                 rawDetectionCount = if (json.has("rawDetectionCount")) json.getInt("rawDetectionCount") else 0,
                 capturedKeypointCount = if (json.has("capturedKeypointCount")) json.getInt("capturedKeypointCount") else 0,
                 cnnCpuPercent = if (json.has("cnnCpuPercent")) json.getDouble("cnnCpuPercent").toFloat() else 0f,

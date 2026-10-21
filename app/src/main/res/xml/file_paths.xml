@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Salinan sequence.json (lihat SequenceExporter.kt), sengaja disalin ke cache terpisah dari
-         files/history/ asli, supaya FileProvider cuma meng-grant file JSON ini, bukan seluruh
-         folder Riwayat (yang juga berisi frame JPEG sesi lain). -->
+    <!-- Exported copies live in the cache, so the FileProvider never exposes files/history/. -->
     <cache-path name="sequence_exports" path="sequence_exports/"/>
     <cache-path name="stats_exports" path="stats_exports/"/>
 </paths>

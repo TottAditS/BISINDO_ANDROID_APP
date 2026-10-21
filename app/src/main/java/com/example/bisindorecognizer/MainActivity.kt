@@ -6,7 +6,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.example.bisindorecognizer.databinding.ActivityMainBinding
 import com.example.bisindorecognizer.history.StatisticsActivity
 
-/** Menu screen: launcher activity, tidak menyentuh kamera sama sekali. */
+/** Launcher menu: open the camera, open the statistics, or quit. */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
@@ -24,10 +24,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, StatisticsActivity::class.java))
         }
 
-        // finishAndRemoveTask() menghapus task dari recent apps (bukan cuma finish() biasa yang
-        // masih nyisa entry recent-apps kosong) -- ini yang paling dekat dengan "Quit" beneran di
-        // Android. CameraActivity (kalau sempat dibuka) sudah pasti selesai & resource-nya
-        // dilepas duluan sebelum MenuActivity ini bisa terlihat lagi, lihat CameraActivity.
+        // Also removes the task from the recent apps list
         binding.btnQuitApp.setOnClickListener {
             finishAndRemoveTask()
         }

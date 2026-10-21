@@ -6,8 +6,7 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import java.io.File
 
-/** Dumps ALL saved sessions (not just the current page) into one CSV for spreadsheet/Python
- * analysis -- e.g. building a live confusion matrix from targetClass + predicted label. */
+/** Writes all saved sessions, one row per attempt, to a CSV file for analysis. */
 object StatsCsvExporter {
     private const val EXPORT_SUBDIR = "stats_exports" // must match res/xml/file_paths.xml
     private val HEADER = listOf(

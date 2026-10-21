@@ -1,10 +1,6 @@
 package com.example.bisindorecognizer
 
-/**
- * Index -> gloss BISINDO, urutan sesuai training (32 kelas). Sumber: tabel mapping yang
- * disediakan user (tidak ada di file config repo riset ML -- lihat README bagian
- * "Keterbatasan yang sudah dikonfirmasi").
- */
+/** Class index to BISINDO gloss, in the order of the WL-BISINDO labels used in training. */
 object LabelMap {
     private val glosses = arrayOf(
         "Air", "Belajar", "Cari", "Hari", "Ingat", "Lagi", "Maaf", "Makan", "Motor", "Saya",

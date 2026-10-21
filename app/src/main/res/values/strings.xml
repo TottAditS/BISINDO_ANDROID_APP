@@ -15,9 +15,7 @@
     <string name="recording_no_hand">Tangan tidak cukup lama terdeteksi selama rekaman, coba lagi</string>
     <string name="guide_box_hint">Posisikan tangan di sini</string>
     <string name="btn_history">Statistik</string>
-    <string name="history_title">Riwayat Prediksi</string>
     <string name="btn_close_history">Tutup</string>
-    <string name="history_empty">Belum ada riwayat prediksi. Rekam gerakan dulu di layar Kamera.</string>
     <string name="history_session_missing">Sesi ini tidak ditemukan (mungkin sudah terhapus otomatis).</string>
     <string name="history_mvit_unavailable">MViTv2: tidak tersedia untuk sesi ini</string>
     <string name="comparison_row">%1$s: %2$s (%3$.1f%%) -- %4$d ms -- %5$s</string>
@@ -28,19 +26,7 @@
     <string name="mvit_no_frames">MViTv2: tidak ada frame tertangkap</string>
     <string name="mvit_oom">MViTv2: gagal (kehabisan memori/OOM di device ini)</string>
     <string name="mvit_error">MViTv2: gagal (error saat inferensi, lihat log)</string>
-    <string name="btn_evaluation">Evaluasi</string>
-    <string name="eval_title">Evaluasi Model</string>
     <string name="eval_empty">Belum ada data -- rekam minimal 1 sesi dulu di layar Kamera.</string>
-    <string name="eval_table_title">Tabel Perbandingan</string>
-    <string name="eval_col_session">Sesi</string>
-    <string name="eval_col_cnn">CNNsa-BiLSTM</string>
-    <string name="eval_col_mvit">MViTv2</string>
-    <string name="eval_mvit_na">Tidak tersedia</string>
-    <string name="eval_session_frame_info">#%1$d\nFrame: %2$d mentah\n%3$d dipakai</string>
-    <string name="eval_perf_info">%1$.1f%% CPU -- %2$.1f MB RAM</string>
-    <string name="eval_model_size">Ukuran model: CNNsa-BiLSTM 14.65 MB -- MViTv2 143 MB</string>
-    <string name="eval_chart_title">Grafik Latensi Inferensi (ms)</string>
-    <string name="eval_detail_note">Yang dievaluasi tiap sesi: (1) CNNsa-BiLSTM dijalankan pada 10 jendela geser sepanjang rekaman, breakdown confidence tiap jendela ditampilkan satu per satu dan yang tertinggi ditandai "(dipilih)" sebagai jawaban akhir, sedangkan MViTv2 tetap breakdown top-3 satu hasil, (2) latency inferensi total (ms), (3) jumlah frame mentah hasil deteksi MediaPipe dibanding frame yang benar-benar dipakai model setelah throttle ~15fps (target training) -- device yang jauh lebih cepat/lambat dari 15fps akan terlihat dari selisih kedua angka ini, (4) penggunaan CPU persen dan RAM (PSS, MB) tiap model saat inferensi, (5) ukuran model.</string>
     <string name="eval_accuracy_note">Toggle Benar/Salah tiap attempt otomatis dihitung dari kelas target yang dipilih sebelum rekam (bisa ditimpa manual). Tekan "Hitung" untuk merangkum jadi grafik akurasi per kelas.</string>
 
     <string name="statistik_title">Statistik</string>

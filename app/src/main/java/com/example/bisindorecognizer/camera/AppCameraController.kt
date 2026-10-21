@@ -17,21 +17,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Wraps CameraX ProcessCameraProvider + ImageAnalysis. Named AppCameraController (not
- * CameraController) to avoid ambiguity with androidx.camera.view.CameraController.
+ * CameraX preview and image analysis with the back camera. Frames are passed to [onFrame] with
+ * their rotation and a monotonic timestamp. The handedness correction for this camera is applied
+ * in HandLandmarkExtractor.
  *
- * Uses the BACK camera (see rencana_fix_handedness.md Opsi A) -- deliberately NOT the front/selfie
- * camera, since the front camera's raw sensor feed produced consistently backwards Left/Right
- * `handedness()` labels vs. what MediaPipe expects.
- *
- * NOTE (2026-08-20): switching to the back camera turned out NOT to make MediaPipe's raw
- * Left/Right output match the desktop training pipeline's labels either -- see the HANDEDNESS
- * SWAP doc in HandLandmarkExtractor.buildVector126, which now applies its own correction on top
- * of whatever this camera produces. The back camera is still the right choice here (its output is
- * at least *consistent*, which is what made the swap detectable and fixable); this comment
- * previously claimed its raw output was already correct, which the empirical data contradicted.
- * Trade-off: no live self-view feedback (can't see the overlay skeleton on your own hand while
- * signing) -- accepted deliberately in favor of correct predictions.
+ * Named AppCameraController to avoid confusion with androidx.camera.view.CameraController.
  */
 class AppCameraController(
     private val context: Context,
@@ -50,12 +40,7 @@ class AppCameraController(
                 it.surfaceProvider = previewView.surfaceProvider
             }
 
-            // Resolusi analysis diturunkan ke 640x480 (bukan resolusi kamera penuh) -- MediaPipe
-            // HandLandmarker memproses tiap frame lebih cepat di resolusi lebih kecil, menaikkan
-            // throughput deteksi di device yang CPU-nya jadi bottleneck (lihat diskusi soal
-            // capture "patah-patah"/di bawah target 15fps di device lemah -- PROGRESS.md). Deteksi
-            // tangan tidak butuh resolusi tinggi, beda dari kebutuhan preview yang tetap full-res
-            // (Preview use case terpisah, tidak terpengaruh perubahan ini).
+            // 640x480 analysis frames keep MediaPipe fast on slow CPUs; the preview keeps full resolution.
             val resolutionSelector = ResolutionSelector.Builder()
                 .setResolutionStrategy(
                     ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
@@ -74,7 +59,7 @@ class AppCameraController(
                     val rotation = imageProxy.imageInfo.rotationDegrees
                     onFrame(bitmap, rotation, SystemClock.uptimeMillis())
                 } finally {
-                    // WAJIB selalu close, kalau tidak pipeline macet setelah beberapa frame.
+                    // Must always be closed, or the analysis stream stalls
                     imageProxy.close()
                 }
             }

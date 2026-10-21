@@ -8,7 +8,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Card adapter for one page of attempts (see StatisticsActivity for pagination/slicing). */
+/** Card adapter for one page of attempts; StatisticsActivity handles the pagination. */
 class StatisticsSessionAdapter(
     private var sessions: List<HistorySession>,
     private val attemptNumbers: Map<String, Int>,
@@ -44,8 +44,7 @@ class StatisticsSessionAdapter(
         val cnnTop = s.cnnPredictions.firstOrNull()
         b.cnnResultText.text = "CNNsa-BiLSTM: ${cnnTop?.label ?: "-"} (${"%.1f".format((cnnTop?.confidence ?: 0f) * 100)}%) -- ${s.cnnLatencyMs} ms"
         b.cnnPerfText.text = "CPU ${"%.0f".format(s.cnnCpuPercent)}% -- RAM ${"%.0f".format(s.cnnRamKb / 1024f)} MB"
-        // Clear listener BEFORE setting isChecked -- on a recycled ViewHolder, setting isChecked
-        // first would fire the PREVIOUS bind's listener with a stale session reference.
+        // Clear the listener before setting isChecked, or a recycled view would fire the old listener
         b.cnnCorrectToggle.setOnCheckedChangeListener(null)
         b.cnnCorrectToggle.isChecked = s.cnnCorrect() ?: false
         b.cnnCorrectToggle.setOnCheckedChangeListener { _, checked -> onToggleCnn(s, checked) }

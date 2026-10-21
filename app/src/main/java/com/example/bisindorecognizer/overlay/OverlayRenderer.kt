@@ -8,15 +8,8 @@ import android.graphics.Paint
 import android.graphics.PointF
 
 /**
- * Geometry + drawing shared by two consumers:
- * - HandOverlayView: live, drawn every frame on top of PreviewView at arbitrary view size with
- *   center-crop scaling (keeps its own cached Paint fields for that hot path -- see that class).
- * - History frame compositing (renderComposite below): infrequent (~10x per 2s recording), bakes
- *   the box+skeleton directly into a copy of the saved bitmap since there's no separate view to
- *   draw on top of at playback time.
- *
- * Both need the SAME rotate-normalized-landmark math so a fix to one (once verified on real
- * hardware -- see HandOverlayView's class doc) applies to the other too.
+ * Landmark rotation and hand drawing shared by the live overlay (HandOverlayView) and the saved
+ * history frames (renderComposite), so both use the same geometry.
  */
 object OverlayRenderer {
 
@@ -40,10 +33,8 @@ object OverlayRenderer {
     }
 
     /**
-     * Rotates [source] to match the device's natural orientation. No mirroring -- back camera
-     * (AppCameraController) is never mirrored by CameraX/PreviewView, unlike the front camera.
-     * No drawing -- used wherever a CLEAN (no box/skeleton) correctly-oriented frame is needed,
-     * e.g. MViTv2's input clip, as opposed to renderComposite() below which draws on top of this.
+     * Rotates [source] to the upright orientation without drawing on it, e.g. for the MViTv2
+     * input clip. The back camera needs no mirroring.
      */
     fun orientForDisplay(source: Bitmap, rotationDegrees: Int): Bitmap {
         val normalizedRotation = ((rotationDegrees % 360) + 360) % 360
@@ -52,7 +43,7 @@ object OverlayRenderer {
         return transformed.copy(Bitmap.Config.ARGB_8888, true)
     }
 
-    /** Bakes box+skeleton onto an [orientForDisplay]-ed copy of [source] (does not mutate [source]). */
+    /** Draws the boxes and skeletons on an upright copy of [source]; [source] is not modified. */
     fun renderComposite(source: Bitmap, data: HandOverlayData): Bitmap {
         val rotationDegrees = ((data.rotationDegrees % 360) + 360) % 360
         val composed = orientForDisplay(source, rotationDegrees)

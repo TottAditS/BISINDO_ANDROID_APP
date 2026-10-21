@@ -17,71 +17,22 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
 /**
- * MediaPipe HandLandmarker (LIVE_STREAM). Builds the 126-float vector expected by the ONNX model:
- * left hand -> [0:63], right hand -> [63:126] (by SMOOTHED handedness label, see
- * [smoothedLabels]), each hand normalized by subtracting the wrist (landmark 0) then dividing by
- * the wrist-to-middle-MCP (landmark 9) distance. A hand that isn't detected stays all-zero.
+ * MediaPipe HandLandmarker in LIVE_STREAM mode. For every frame it reports the analyzed bitmap, the
+ * 126-value model input, and the raw landmarks for the overlay through [onDetectionResult].
  *
- * Reports one detection at a time via [onDetectionResult]: the bitmap that was analyzed (for
- * history-frame compositing), the 126-float model-input vector, and the raw (un-normalized)
- * 21-point landmarks per hand for HandOverlayView's bounding box/skeleton drawing. All three
- * bundled in one callback (rather than separate ones) so callers don't have to rely on call
- * order to correlate them.
+ * The model input follows the training layout: one hand in [0:63], the other in [63:126], each
+ * expressed relative to the wrist (landmark 0) and divided by the wrist-to-middle-MCP (landmark 9)
+ * distance. A missing hand stays zero.
  *
- * HANDEDNESS + ROTATION (root-caused 2026-08-20, see PROGRESS.md for the full writeup): the
- * previous 4 bugfixes (back camera, time-based windowing, lower ImageAnalysis resolution,
- * misdetection filtering) still left CNNsa-BiLSTM near-total live failure while MViTv2 stayed
- * accurate on the same recordings. Diagnosed by comparing exported `sequence.json` values (see
- * history/SequenceExporter.kt) from 5 live sessions against real desktop-extracted training
- * samples for the SAME 5 gloss classes, across 5 different training signers -- TWO compounding
- * bugs found, neither of which is a model-quality problem:
+ * Two corrections make the live vectors match the training data, which was checked by replaying
+ * recorded sessions through the ONNX model:
+ * - The handedness label from the back camera is mirrored relative to the training pipeline, so
+ *   "Left" goes to [63:126] and "Right" to [0:63].
+ * - MediaPipe receives the unrotated sensor bitmap, so each landmark is rotated to the upright
+ *   orientation before normalization, using the frame's rotationDegrees.
  *
- * 1. Handedness swap: switching to the BACK camera (rencana_fix_handedness.md) did NOT make
- *    `categoryName()` match the desktop training pipeline's labels, contrary to what was assumed
- *    when that switch was made. Desktop keypoints landed in the "Left" half ([0:63]) essentially
- *    100% of the time; live keypoints landed in the "Right" half ([63:126]) essentially 100% of
- *    the time -- a clean, total inversion, not noise.
- * 2. Missing rotation: the raw sensor bitmap handed to MediaPipe here is NEVER rotated to upright
- *    display orientation before `detectAsync()` -- unlike CameraActivity's MViTv2 path, which
- *    calls `OverlayRenderer.orientForDisplay()` first. This is the likely reason MViTv2 kept
- *    working live while CNNsa-BiLSTM didn't: MViTv2's Android preprocessing happened to already
- *    match training, CNNsa-BiLSTM's didn't.
- *
- * Both were validated together, offline, against 5 real recorded live sessions replayed through
- * the actual desktop-trained ONNX model (not just theory): swap-the-half + rotate-(x,y)-90deg
- * turned 0/5 correct into 5/5 correct at ~100% confidence each. [buildVector126] below applies
- * both corrections -- `"Left" -> 63, "Right" -> 0` for the swap (see inline comment there), and
- * `OverlayRenderer.rotateNormalized()` (the SAME already-hardware-verified rotation the overlay
- * uses) on each landmark before wrist-relative normalization, using whatever `rotationDegrees`
- * this frame actually reported -- not a hardcoded angle, so it stays correct regardless of device
- * orientation. The overlay/HandOverlayView/renderComposite path is deliberately left untouched;
- * only the model-input vector needed correcting. The underlying WHY (exactly how the training
- * videos were recorded/oriented) is not confirmed -- only that the correction empirically matches
- * the training distribution.
- *
- * FLICKER: MediaPipe's per-frame classification can still transiently flip for ~1s during fast
- * hand movement (observed on-device) even though it's the same physical hand -- LIVE_STREAM mode
- * gives no persistent hand ID to rely on, and a single wrong frame corrupts that frame's
- * [0:63]/[63:126] bucketing, which can corrupt the whole 30-frame CNNsa-BiLSTM sequence built from
- * it. [smoothedLabels] mitigates this with a lightweight nearest-wrist tracker (matches this
- * frame's hands to last frame's by wrist proximity) plus a majority vote over each tracked hand's
- * last [LABEL_HISTORY_SIZE] raw labels -- a single flickered frame is outvoted by the stable
- * majority, but a real, sustained handedness change (e.g. user switches which hand signs) still
- * comes through once it dominates the window.
- *
- * MISDETECTION (found 2026-08-06 reviewing Riwayat flipbook screenshots from live tests): even
- * above MediaPipe's own min_hand_detection_confidence (0.5), the landmarker occasionally locks
- * onto a non-hand region for a run of consecutive frames -- observed boxes on a shoulder/collar,
- * and BOTH detected hands labeled "Left" simultaneously (anatomically impossible, since each
- * hand's handedness is classified independently there's no built-in exclusivity). A run of
- * several bad consecutive frames is NOT something [smoothedLabels]'s 5-frame majority vote can
- * fix (it assumes flicker is the minority in its window) -- it just smooths the wrong region into
- * the tracked history. [plausibleHandIndices] filters BEFORE smoothing: drops any hand whose
- * handedness classification score is below [MIN_HANDEDNESS_CONFIDENCE] (stricter than the base
- * landmarker threshold), and de-duplicates same-label hands (keeps only the higher-confidence
- * one) -- a hand that fails this is treated as "not detected" for that frame, same zero-vector
- * convention already used for a genuinely absent hand, rather than feeding a plausibly-wrong
- * region into the model as if it were real hand data.
+ * Detections are also filtered ([plausibleHandIndices]) and handedness labels are smoothed over
+ * recent frames ([smoothedLabels]) to reduce misdetections and label flicker.
  */
 class HandLandmarkExtractor(
     context: Context,
@@ -90,17 +41,13 @@ class HandLandmarkExtractor(
     private val handLandmarker: HandLandmarker
     private val busy = AtomicBoolean(false)
 
-    // Set right before each detectAsync() call and read back in onResult() -- safe because
-    // submit()'s busy flag guarantees only one detection is in flight at a time.
+    // Set before each detectAsync() and read in onResult(); safe because only one detection is in flight.
     @Volatile
     private var lastRotationDegrees: Int = 0
     @Volatile
     private lateinit var lastBitmap: Bitmap
 
-    // Handedness smoothing state -- touched ONLY from onResult() and the functions it calls
-    // (buildOverlayData/buildVector126 no longer touch this directly), which all run on
-    // MediaPipe's single internal result-delivery thread, sequentially -- no synchronization
-    // needed despite being mutable state shared across calls.
+    // Only used from MediaPipe's single result thread, so no synchronization is needed.
     private val trackedHands = mutableListOf<TrackedHand>()
 
     private class TrackedHand(var wrist: PointF) {
@@ -123,14 +70,11 @@ class HandLandmarkExtractor(
     }
 
     /**
-     * timestampMs must be strictly increasing across calls -- use SystemClock.uptimeMillis()
-     * taken at analysis time, NOT System.currentTimeMillis() (can jump due to clock sync) and NOT
-     * the ImageProxy sensor timestamp (different clock base/unit, can violate monotonicity and
-     * throw).
+     * timestampMs must increase strictly between calls; use SystemClock.uptimeMillis() taken at
+     * analysis time.
      */
     fun submit(bitmap: Bitmap, rotationDegrees: Int, timestampMs: Long) {
-        // Drop frame if the previous detectAsync call hasn't finished yet -- STRATEGY_KEEP_ONLY_LATEST
-        // on ImageAnalysis only controls what reaches the analyzer, not HandLandmarker's own pace.
+        // Drop the frame while the previous detection is still running
         if (!busy.compareAndSet(false, true)) return
         lastRotationDegrees = rotationDegrees
         lastBitmap = bitmap
@@ -146,25 +90,20 @@ class HandLandmarkExtractor(
         onDetectionResult(lastBitmap, vector, overlay)
     }
 
-    // Lihat "MISDETECTION" di doc class. Dipanggil SEBELUM smoothedLabels() -- hand yang tidak
-    // lolos di sini tidak pernah masuk tracking/history sama sekali, diperlakukan persis seperti
-    // "tidak terdeteksi" (vector nol, tidak digambar overlay) untuk frame ini.
+    // Drops hands with a low handedness score and keeps only the more confident one when two hands
+    // share a label. Dropped hands are treated as not detected in this frame.
     private fun plausibleHandIndices(result: HandLandmarkerResult): List<Int> {
         val confidences = result.handedness().map { it[0].score() }
         val labels = result.handedness().map { it[0].categoryName() }
         val candidates = confidences.indices.filter { confidences[it] >= MIN_HANDEDNESS_CONFIDENCE }
 
-        // De-dupe: 2 kandidat dengan label sama (mustahil secara fisik) -- simpan yang
-        // confidence-nya lebih tinggi saja, buang sisanya.
         return candidates
             .groupBy { labels[it] }
             .map { (_, idxs) -> idxs.maxByOrNull { confidences[it] }!! }
     }
 
-    // Lihat doc class untuk kenapa ini ada. Dipanggil SEKALI per hasil deteksi (bukan per
-    // konsumen) supaya buildOverlayData() dan buildVector126() melihat label yang SAMA persis.
-    // Hanya memproses [keptIndices] (sudah lolos filter plausibilitas) -- key Map yang
-    // dikembalikan adalah index ASLI di result.landmarks()/handedness(), bukan posisi di keptIndices.
+    // Matches each hand to the nearest tracked wrist from the previous frame and returns the
+    // majority label over its last LABEL_HISTORY_SIZE frames. Keys are indices into result.landmarks().
     private fun smoothedLabels(result: HandLandmarkerResult, keptIndices: List<Int>): Map<Int, String> {
         val wrists = keptIndices.associateWith { PointF(result.landmarks()[it][0].x(), result.landmarks()[it][0].y()) }
         val rawLabels = keptIndices.associateWith { result.handedness()[it][0].categoryName() }
@@ -224,19 +163,8 @@ class HandLandmarkExtractor(
         return HandOverlayData(hands, imageWidth, imageHeight, rotationDegrees)
     }
 
-    // ROTATION FIX (confirmed empirically 2026-08-20, see HANDEDNESS SWAP doc above for the
-    // companion fix): the raw sensor bitmap fed to MediaPipe here is NEVER rotated to upright
-    // display orientation before detectAsync() (unlike CameraActivity's MViTv2 path, which calls
-    // OverlayRenderer.orientForDisplay() first) -- so result.landmarks() come back in the raw
-    // landscape sensor frame, ~90deg off from the upright frame the desktop training pipeline's
-    // videos were in. Reusing OverlayRenderer.rotateNormalized() (the SAME, hardware-verified
-    // rotation already used for overlay drawing) on each raw landmark's (x,y) BEFORE wrist-relative
-    // normalization corrects this without needing a second MediaPipe pass on a pre-rotated bitmap.
-    // Rotation is linear and commutes with the subsequent wrist-subtraction/scale-normalization
-    // (a shared additive/scalar term cancels out), so applying it here is equivalent to applying
-    // it to the already-normalized vector -- validated offline against 5 real recorded sessions +
-    // the desktop-trained ONNX model: swapped-half + this rotation = 5/5 correct, ~100% confidence
-    // each, vs 0/5 without it.
+    // Rotates (x, y) of every landmark to the upright orientation, then normalizes relative to the
+    // wrist and the wrist-to-middle-MCP distance, as in the training pipeline.
     private fun buildVector126(
         result: HandLandmarkerResult,
         keptIndices: List<Int>,
@@ -245,9 +173,7 @@ class HandLandmarkExtractor(
     ): FloatArray {
         val vector = FloatArray(126)
         for (i in keptIndices) {
-            // INVERTED vs the naive "Left"->0/"Right"->63 mapping -- see HANDEDNESS SWAP doc
-            // above. Confirmed empirically 2026-08-20: live handedness() output is the mirror
-            // image of what the desktop training pipeline produced for the same signs.
+            // Mirrored handedness, see the class documentation
             val offset = if (labels.getValue(i) == "Left") 63 else 0
             val lm = result.landmarks()[i]
             val wristRaw = lm[0]
@@ -282,24 +208,15 @@ class HandLandmarkExtractor(
     companion object {
         private const val TAG = "HandLandmarkExtractor"
 
-        // Berapa banyak label mentah terakhir (per tangan yang di-track) dipakai buat majority
-        // vote -- makin besar makin tahan flicker, tapi makin lambat merespons pertukaran tangan
-        // yang BENERAN terjadi (mis. user ganti tangan yang bergestur). Nilai awal, belum ditest.
+        // Frames used for the handedness majority vote
         private const val LABEL_HISTORY_SIZE = 5
 
-        // Jarak (koordinat ternormalisasi [0,1]) maksimum antar wrist 2 frame berurutan supaya
-        // masih dianggap tangan fisik yang sama -- gerakan tangan lebih jauh dari ini di 1 frame
-        // dianggap tangan baru (history mulai dari nol lagi). Nilai awal, belum ditest di device.
+        // Maximum wrist movement between frames, in normalized image coordinates, for a hand to
+        // count as the same tracked hand
         private const val MAX_TRACKING_DISTANCE = 0.25f
 
-        // Ambang confidence handedness classification -- SENGAJA lebih ketat dari
-        // min_hand_detection_confidence (0.5) yang dipakai HandLandmarkerOptions di atas. Lihat
-        // "MISDETECTION" di doc class: box yang nyasar ke bahu/wajah yang diamati di Riwayat masih
-        // lolos ambang 0.5 milik landmarker sendiri -- ambang tambahan ini di titik BERBEDA
-        // (skor klasifikasi Left/Right per hand, bukan skor deteksi awal) buat nyaring kandidat
-        // yang lolos deteksi tapi klasifikasi handedness-nya sendiri tidak yakin. Nilai awal,
-        // belum ditest di device -- turunkan kalau tangan asli malah sering ke-reject (tidak
-        // pernah kelihatan overlay-nya), naikkan kalau box salah masih lolos.
+        // Minimum handedness score; stricter than the 0.5 detection threshold to reject detections
+        // on non-hand regions such as a shoulder
         private const val MIN_HANDEDNESS_CONFIDENCE = 0.8f
     }
 }

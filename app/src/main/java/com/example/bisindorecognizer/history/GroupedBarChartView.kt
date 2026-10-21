@@ -8,13 +8,12 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 
-/** One group (e.g. one gesture class) -- up to 2 series (CNN/MViT2), null = no data for that series. */
+/** One group (one sign class) with a value per model; null means no data. */
 data class ChartGroup(val label: String, val cnnValue: Float?, val mvitValue: Float?)
 
 /**
- * Grouped bar chart for N groups (unlike LatencyChartView's fixed 5-group direct-label design):
- * Y-axis gridlines + ticks instead of per-bar text, since with 32 groups x 2 series direct labels
- * overlap. X-axis labels drawn vertically to fit many groups in limited width.
+ * Grouped bar chart with two series (CNNsa-BiLSTM and MViTv2). Uses y-axis gridlines instead of
+ * value labels and rotated x-axis labels, so 32 classes fit on a phone screen.
  */
 class GroupedBarChartView @JvmOverloads constructor(
     context: Context,

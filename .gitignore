@@ -1,11 +1,10 @@
-# Gradle build output/cache -- besar (ratusan MB) & machine-specific, selalu regenerable lewat
-# `.\gradlew.bat assembleDebug`. Jangan pernah commit ini.
+# Gradle build output and caches
 .gradle/
 build/
 app/build/
 .kotlin/
 
-# Local machine config -- berisi path SDK lokal (ANDROID_HOME), beda per mesin.
+# Local SDK path
 local.properties
 
 # IDE
@@ -15,7 +14,7 @@ local.properties
 !.vscode/settings.json
 !.vscode/extensions.json
 
-# Android native build cache
+# Native build caches
 captures/
 .externalNativeBuild/
 .cxx/
@@ -24,11 +23,7 @@ captures/
 .DS_Store
 Thumbs.db
 
-# Model MViTv2 -- mvit_v2.onnx.data sendiri 140.3MB, di atas hard limit 100MB GitHub (push bakal
-# ditolak). Diexclude sementara (keputusan user 2026-08-04) daripada setup Git LFS sekarang.
-# Konsekuensi: siapa pun yang clone repo ini WAJIB copy manual 2 file ini dari
-# D:\Softwares\AnacondaProjects\CNN-LSTM_BISINDO_Android\Export\Output\onnx\ ke
-# app/src/main/assets/ sebelum build -- tanpanya, fitur perbandingan MViTv2 di CameraActivity
-# akan gagal load (lihat PROGRESS.md bagian "MViTv2: perbandingan on-device").
+# MViTv2 model files (mvit_v2.onnx.data is about 140 MB, above GitHub's 100 MB limit).
+# Copy them from the research repository's Export/Output/onnx/ before building; see README.
 app/src/main/assets/mvit_v2.onnx
 app/src/main/assets/mvit_v2.onnx.data

@@ -7,20 +7,15 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 /**
- * Shares a session's raw `sequence.json` (the exact 30x126 float array sent to CNNsa-BiLSTM) via
- * the Android share sheet -- e.g. so it can be sent directly in a chat for numeric diagnosis.
- *
- * Copies the file into cache (not the original app-private `files/history/` folder) so the
- * FileProvider grant covers only this one exported copy, not the whole history directory.
+ * Shares a session's sequence.json, the 30x126 input sent to CNNsa-BiLSTM, through the Android
+ * share sheet. The file is copied to the cache first so the FileProvider grant covers only that copy.
  */
 object SequenceExporter {
     private const val EXPORT_SUBDIR = "sequence_exports" // must match res/xml/file_paths.xml
 
     /**
-     * Returns the exported copy, or null if [session] predates sequence.json (old session).
-     * [sessionNumber] (dari [sessionNumbers], nomor kronologis, 1 = sesi pertama direkam) dipakai
-     * di nama file supaya sesi gampang dibedakan waktu dikirim keluar aplikasi (mis. "sesi3") --
-     * sebelumnya cuma pakai timestamp mentah, susah dikenali tanpa buka aplikasi lagi.
+     * Returns the exported copy, or null if the session has no sequence.json. [sessionNumber] is
+     * used in the file name.
      */
     fun export(context: Context, session: HistorySession, sessionNumber: Int?): File? {
         val source = session.sequenceFile()
